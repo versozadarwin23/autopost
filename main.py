@@ -25,8 +25,8 @@ from datetime import datetime
 
 # --- UPDATE NEWS VARIABLES ---
 __version__ = "1"
-UPDATE_URL = "https://raw.githubusercontent.com/versozadarwin23/adbtool/refs/heads/main/main.py"
-VERSION_CHECK_URL = "https://raw.githubusercontent.com/versozadarwin23/adbtool/refs/heads/main/version.txt"
+UPDATE_URL = "https://raw.githubusercontent.com/versozadarwin23/autopost/refs/heads/main/main.py"
+VERSION_CHECK_URL = "https://raw.githubusercontent.com/versozadarwin23/autopost/refs/heads/main/version.txt"
 
 # --- CONFIGURATION & THEME ---
 ctk.set_appearance_mode("dark")
@@ -1163,4 +1163,5 @@ del "%~f0"
 
 if __name__ == "__main__":
     app = FacebookAutomationGUI()
+
     app.mainloop()
