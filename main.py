@@ -24,7 +24,7 @@ from selenium.webdriver.common.keys import Keys
 from datetime import datetime
 
 # --- UPDATE NEWS VARIABLES ---
-__version__ = "2"
+__version__ = "1"
 UPDATE_URL = "https://raw.githubusercontent.com/versozadarwin23/autopost/refs/heads/main/main.py"
 VERSION_CHECK_URL = "https://raw.githubusercontent.com/versozadarwin23/autopost/refs/heads/main/version.txt"
 
@@ -1165,4 +1165,5 @@ if __name__ == "__main__":
     app = FacebookAutomationGUI()
 
     app.mainloop()
+
 
