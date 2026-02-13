@@ -1,6 +1,6 @@
 import tkinter as tk
 from tkinter import filedialog, messagebox
-from tkinter import ttk  # Added for the Treeview (System Logs Table)
+from tkinter import ttk
 import customtkinter as ctk
 import subprocess
 import time
@@ -11,7 +11,6 @@ import threading
 import shutil
 import sys
 import urllib.request
-
 from PIL import Image, ImageTk
 from selenium import webdriver
 from selenium.common import TimeoutException
@@ -23,49 +22,45 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.keys import Keys
 from datetime import datetime
 
-# --- UPDATE NEWS VARIABLES ---
 __version__ = "1"
 UPDATE_URL = "https://raw.githubusercontent.com/versozadarwin23/autopost/refs/heads/main/main.py"
 VERSION_CHECK_URL = "https://raw.githubusercontent.com/versozadarwin23/autopost/refs/heads/main/version.txt"
 
-# --- CONFIGURATION & THEME ---
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("dark-blue")
 
 COLORS = {
-    "bg_main": "#121212",
-    "bg_card": "#1E1E1E",
-    "bg_lighter": "#2D2D2D",
-    "primary": "#3B8ED0",
-    "success": "#00C853",
-    "warning": "#FFAB00",
-    "danger": "#D50000",
-    "text_main": "#FFFFFF",
-    "text_sub": "#B0B0B0",
-    "border": "#333333"
+    "bg_main": "#0D1117",
+    "bg_card": "#161B22",
+    "bg_lighter": "#21262D",
+    "primary": "#58A6FF",
+    "success": "#2EA043",
+    "warning": "#E3B341",
+    "danger": "#F85149",
+    "text_main": "#C9D1D9",
+    "text_sub": "#8B949E",
+    "border": "#30363D"
 }
 
-FONT_HEADER = ("Roboto Medium", 20)
-FONT_SUBHEADER = ("Roboto Medium", 14)
-FONT_BODY = ("Roboto", 12)
-FONT_MONO = ("Consolas", 11)
+FONT_HEADER = ("Roboto", 22, "bold")
+FONT_SUBHEADER = ("Roboto", 15, "bold")
+FONT_BODY = ("Roboto", 13)
+FONT_MONO = ("Consolas", 12)
 
-
-# --- CUSTOM WIDGETS ---
 
 class StatCard(ctk.CTkFrame):
     def __init__(self, parent, title, value, icon, color):
-        super().__init__(parent, fg_color=COLORS["bg_card"], corner_radius=12,
+        super().__init__(parent, fg_color=COLORS["bg_card"], corner_radius=15,
                          border_width=1, border_color=COLORS["border"])
         self.value_var = ctk.StringVar(value=str(value))
         self.icon_label = ctk.CTkLabel(self, text=icon, font=("Segoe UI Emoji", 24))
-        self.icon_label.place(relx=0.85, rely=0.2, anchor="center")
-        self.title_label = ctk.CTkLabel(self, text=title.upper(), font=("Roboto", 10, "bold"),
+        self.icon_label.place(relx=0.85, rely=0.25, anchor="center")
+        self.title_label = ctk.CTkLabel(self, text=title.upper(), font=("Roboto", 11, "bold"),
                                         text_color=COLORS["text_sub"])
-        self.title_label.pack(anchor="w", padx=15, pady=(15, 0))
-        self.value_label = ctk.CTkLabel(self, textvariable=self.value_var, font=("Roboto", 24, "bold"),
+        self.title_label.pack(anchor="w", padx=15, pady=(12, 0))
+        self.value_label = ctk.CTkLabel(self, textvariable=self.value_var, font=("Roboto", 28, "bold"),
                                         text_color=color)
-        self.value_label.pack(anchor="w", padx=15, pady=(0, 15))
+        self.value_label.pack(anchor="w", padx=15, pady=(2, 12))
 
     def update_value(self, new_value):
         self.value_var.set(str(new_value))
@@ -79,44 +74,35 @@ class StatsFrame(ctk.CTkFrame):
         self.grid_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.grid_frame.pack(fill="both", expand=True)
         self.grid_frame.grid_columnconfigure((0, 1), weight=1)
-        self.card_shares = StatCard(self.grid_frame, "Total Shares", "0", "🚀", COLORS["success"])
-        self.card_shares.grid(row=0, column=0, padx=5, pady=5, sticky="ew")
-        self.card_failed = StatCard(self.grid_frame, "Failed", "0", "⚠️", COLORS["danger"])
-        self.card_failed.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
-        self.card_success_rate = StatCard(self.grid_frame, "Success Rate", "0%", "📈", COLORS["primary"])
-        self.card_success_rate.grid(row=1, column=0, padx=5, pady=5, sticky="ew")
-        self.card_devices = StatCard(self.grid_frame, "Active Devices", "0", "📱", COLORS["warning"])
-        self.card_devices.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
-        self.card_runtime = StatCard(self.grid_frame, "Runtime", "00:00:00", "⏱️", COLORS["text_main"])
-        self.card_runtime.grid(row=2, column=0, columnspan=2, padx=5, pady=5, sticky="ew")
 
-    def update_stats(self, shares, failed, attempts):
+        self.card_shares = StatCard(self.grid_frame, "Total Shares", "0", "🚀", COLORS["success"])
+        self.card_shares.grid(row=0, column=0, padx=(0, 5), pady=5, sticky="ew")
+
+        self.card_failed = StatCard(self.grid_frame, "Failed", "0", "⚠️", COLORS["danger"])
+        self.card_failed.grid(row=0, column=1, padx=(5, 0), pady=5, sticky="ew")
+
+        self.card_devices = StatCard(self.grid_frame, "Active Devices", "0", "📱", COLORS["warning"])
+        self.card_devices.grid(row=1, column=0, columnspan=2, padx=0, pady=(5, 5), sticky="ew")
+
+    def update_stats(self, shares, failed):
         self.card_shares.update_value(shares)
         self.card_failed.update_value(failed)
-        if attempts > 0:
-            success_rate = ((attempts - failed) / attempts) * 100
-            self.card_success_rate.update_value(f"{success_rate:.1f}%")
-        else:
-            self.card_success_rate.update_value("0%")
 
     def update_devices(self, count):
         self.card_devices.update_value(count)
 
-    def update_runtime(self, runtime_str):
-        self.card_runtime.update_value(runtime_str)
-
 
 class DeviceFrame(ctk.CTkFrame):
     def __init__(self, parent, device_id):
-        super().__init__(parent, fg_color=COLORS["bg_card"], corner_radius=10,
+        super().__init__(parent, fg_color=COLORS["bg_card"], corner_radius=12,
                          border_width=1, border_color=COLORS["border"])
         self.device_id = device_id
         header_frame = ctk.CTkFrame(self, fg_color="transparent")
-        header_frame.pack(fill="x", padx=15, pady=(15, 15))
-        self.device_label = ctk.CTkLabel(header_frame, text=f"📱 {device_id}", font=("Roboto", 13, "bold"),
+        header_frame.pack(fill="x", padx=20, pady=15)
+        self.device_label = ctk.CTkLabel(header_frame, text=f"📱 {device_id}", font=("Roboto", 14, "bold"),
                                          text_color=COLORS["primary"])
         self.device_label.pack(side="left")
-        self.info_label = ctk.CTkLabel(header_frame, text="Syncing...", font=("Roboto", 11),
+        self.info_label = ctk.CTkLabel(header_frame, text="Syncing...", font=FONT_BODY,
                                        text_color=COLORS["text_sub"])
         self.info_label.pack(side="right")
 
@@ -125,45 +111,46 @@ class DeviceFrame(ctk.CTkFrame):
         self.info_label.configure(text=info_text)
 
 
-# --- MODIFIED: LINK QUEUE BEAUTIFICATION ---
 class PairFrame(ctk.CTkFrame):
     def __init__(self, parent, pair_num, on_remove):
-        super().__init__(parent, fg_color=COLORS["bg_main"], corner_radius=8,
-                         border_width=1, border_color="#3A3A3A")
+        super().__init__(parent, fg_color=COLORS["bg_lighter"], corner_radius=12,
+                         border_width=1, border_color=COLORS["border"])
         self.on_remove = on_remove
 
-        # Header
         header = ctk.CTkFrame(self, fg_color="transparent")
-        header.pack(fill="x", padx=15, pady=(10, 5))
-        self.header_label = ctk.CTkLabel(header, text=f"📍 LINK #{pair_num}", font=("Roboto", 13, "bold"),
+        header.pack(fill="x", padx=20, pady=(15, 5))
+        self.header_label = ctk.CTkLabel(header, text=f"📍 LINK #{pair_num}", font=("Roboto", 14, "bold"),
                                          text_color=COLORS["primary"])
         self.header_label.pack(side="left")
 
         if pair_num > 1:
-            btn_del = ctk.CTkButton(header, text="✖", width=28, height=28, fg_color="transparent",
-                                    hover_color=COLORS["danger"], text_color=COLORS["text_sub"], command=self.remove)
+            btn_del = ctk.CTkButton(header, text="✖", width=30, height=30, fg_color="transparent",
+                                    hover_color=COLORS["danger"], text_color=COLORS["text_sub"], corner_radius=8,
+                                    command=self.remove)
             btn_del.pack(side="right")
 
-        # Content Inputs
         content = ctk.CTkFrame(self, fg_color="transparent")
-        content.pack(fill="x", padx=15, pady=(0, 15))
+        content.pack(fill="x", padx=20, pady=(0, 20))
 
-        ctk.CTkLabel(content, text="Target Link / URL", font=("Roboto", 11), text_color=COLORS["text_sub"]).pack(
-            anchor="w", pady=(5, 2))
-        self.link_entry = ctk.CTkEntry(content, height=35, placeholder_text="e.g., https://facebook.com/...",
-                                       fg_color=COLORS["bg_card"], border_color=COLORS["border"], corner_radius=6)
-        self.link_entry.pack(fill="x", pady=(0, 10))
+        ctk.CTkLabel(content, text="Target Link / URL", font=("Roboto", 12, "bold"),
+                     text_color=COLORS["text_sub"]).pack(
+            anchor="w", pady=(5, 5))
+        self.link_entry = ctk.CTkEntry(content, height=40, placeholder_text="e.g., https://facebook.com/...",
+                                       fg_color=COLORS["bg_main"], border_color=COLORS["border"], corner_radius=8)
+        self.link_entry.pack(fill="x", pady=(0, 15))
 
-        ctk.CTkLabel(content, text="Caption File (.txt)", font=("Roboto", 11), text_color=COLORS["text_sub"]).pack(
-            anchor="w", pady=(0, 2))
+        ctk.CTkLabel(content, text="Caption File (.txt)", font=("Roboto", 12, "bold"),
+                     text_color=COLORS["text_sub"]).pack(
+            anchor="w", pady=(0, 5))
         cap_row = ctk.CTkFrame(content, fg_color="transparent")
         cap_row.pack(fill="x")
-        self.caption_path = ctk.CTkEntry(cap_row, height=35, placeholder_text="Select caption file...",
-                                         fg_color=COLORS["bg_card"], border_color=COLORS["border"], corner_radius=6)
-        self.caption_path.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        self.caption_path = ctk.CTkEntry(cap_row, height=40, placeholder_text="Select caption file...",
+                                         fg_color=COLORS["bg_main"], border_color=COLORS["border"], corner_radius=8)
+        self.caption_path.pack(side="left", fill="x", expand=True, padx=(0, 10))
 
-        btn_browse = ctk.CTkButton(cap_row, text="Browse", width=70, height=35, fg_color=COLORS["bg_lighter"],
-                                   hover_color=COLORS["primary"], font=("Roboto", 12), corner_radius=6,
+        btn_browse = ctk.CTkButton(cap_row, text="Browse", width=80, height=40, fg_color=COLORS["bg_card"],
+                                   hover_color=COLORS["primary"], border_width=1, border_color=COLORS["border"],
+                                   font=("Roboto", 13, "bold"), corner_radius=8,
                                    command=self.browse_caption)
         btn_browse.pack(side="right")
 
@@ -177,13 +164,11 @@ class PairFrame(ctk.CTkFrame):
             self.caption_path.insert(0, file)
 
 
-# --- MAIN GUI ---
-
 class FacebookAutomationGUI(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        self.title(f"AutoPost Pro v{__version__} | Ultimate Facebook Automation")
+        self.title(f"AutoPost V{__version__}")
         self.geometry("1280x800")
         self.after(0, lambda: self.state("zoomed"))
         self.configure(fg_color=COLORS["bg_main"])
@@ -202,15 +187,11 @@ class FacebookAutomationGUI(ctk.CTk):
         self.all_logs = []
         self.saved_settings = {}
 
-        self.runtime_active = False
-        threading.Thread(target=self.runtime_updater, daemon=True).start()
         threading.Thread(target=self.device_monitor_thread, daemon=True).start()
 
         self.load_settings()
         self.layout_ui()
         self.refresh_devices()
-
-        # --- AUTO-UPDATE CHECKER ---
         self.check_for_updates()
 
         self.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -225,12 +206,12 @@ class FacebookAutomationGUI(ctk.CTk):
                 if remote_version and remote_version != __version__:
                     self.after(0, lambda: self.show_update_popup(remote_version))
             except Exception as e:
-                print(f"Update check failed: {e}")
+                pass
 
         threading.Thread(target=_check, daemon=True).start()
 
     def show_update_popup(self, remote_version):
-        msg = f"A new update is available! (Version {remote_version})\n\nWould you like to download and install the update now? The program will close and restart automatically."
+        msg = f"A new update is available! (Version V{remote_version})\n\nWould you like to download and install the update now? The program will close and restart automatically."
         if messagebox.askyesno("System Update", msg):
             self.perform_update()
 
@@ -251,7 +232,7 @@ class FacebookAutomationGUI(ctk.CTk):
                     script_name = "main.py"
 
                 bat_code = f"""@echo off
-echo Updating AutoPost Pro... Please do not close this window.
+echo Updating AutoPost... Please do not close this window.
 timeout /t 3 /nobreak >nul
 move /y main_update.py "{script_name}"
 start python "{script_name}"
@@ -284,40 +265,32 @@ del "%~f0"
                 pass
             time.sleep(3)
 
-    def runtime_updater(self):
-        while True:
-            if getattr(self, 'is_running', False) and getattr(self, 'start_time', None):
-                delta = datetime.now() - self.start_time
-                clean_time = str(delta).split('.')[0]
-                try:
-                    self.after(0, lambda ct=clean_time: self.overall_stats.update_runtime(ct))
-                except:
-                    pass
-            time.sleep(1)
-
     def layout_ui(self):
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(1, weight=1)
         header = ctk.CTkFrame(self, fg_color=COLORS["bg_card"], height=60, corner_radius=0)
         header.grid(row=0, column=0, sticky="ew")
 
-        title_text = f"AUTOPOST PRO v{__version__}"
-        ctk.CTkLabel(header, text=title_text, font=("Montserrat", 20, "bold"), text_color=COLORS["primary"]).pack(
-            side="left", padx=20, pady=15)
+        title_text = f"AUTOPOST V{__version__}"
+        ctk.CTkLabel(header, text=title_text, font=FONT_HEADER, text_color=COLORS["primary"]).pack(
+            side="left", padx=25, pady=15)
 
-        self.status_badge = ctk.CTkLabel(header, text="● IDLE", font=("Roboto", 12, "bold"),
+        self.status_badge = ctk.CTkLabel(header, text="● IDLE", font=("Roboto", 13, "bold"),
                                          text_color=COLORS["text_sub"])
-        self.status_badge.pack(side="right", padx=20)
+        self.status_badge.pack(side="right", padx=25)
+
         main_content = ctk.CTkFrame(self, fg_color="transparent")
         main_content.grid(row=1, column=0, sticky="nsew", padx=20, pady=20)
         main_content.grid_rowconfigure(0, weight=1)
         main_content.grid_columnconfigure(0, weight=1)
+
         self.tabview = ctk.CTkTabview(main_content, fg_color=COLORS["bg_main"],
                                       segmented_button_fg_color=COLORS["bg_card"],
                                       segmented_button_selected_color=COLORS["primary"],
                                       segmented_button_unselected_color=COLORS["bg_card"],
-                                      segmented_button_selected_hover_color=COLORS["primary"], corner_radius=10)
+                                      segmented_button_selected_hover_color=COLORS["primary"], corner_radius=12)
         self.tabview.grid(row=0, column=0, sticky="nsew")
+
         self.tab_dash = self.tabview.add("  Dashboard  ")
         self.tab_devices = self.tabview.add("  Devices  ")
         self.tab_config = self.tabview.add("  Settings  ")
@@ -330,158 +303,181 @@ del "%~f0"
         self.setup_logs()
         self.setup_adb()
 
-    # --- MODIFIED: DASHBOARD UI FOR LINK QUEUE ---
     def setup_dashboard(self):
         self.tab_dash.grid_columnconfigure(1, weight=1)
         self.tab_dash.grid_rowconfigure(0, weight=1)
 
-        left_panel = ctk.CTkFrame(self.tab_dash, fg_color="transparent", width=350)
+        left_panel = ctk.CTkScrollableFrame(self.tab_dash, fg_color="transparent", width=360)
         left_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
 
         self.overall_stats = StatsFrame(left_panel)
-        self.overall_stats.pack(fill="x", pady=(0, 20))
+        self.overall_stats.pack(fill="x", pady=(0, 15))
 
-        control_frame = ctk.CTkFrame(left_panel, fg_color=COLORS["bg_card"], corner_radius=12, border_width=1,
+        control_frame = ctk.CTkFrame(left_panel, fg_color=COLORS["bg_card"], corner_radius=15, border_width=1,
                                      border_color=COLORS["border"])
         control_frame.pack(fill="x", pady=(0, 10))
-        ctk.CTkLabel(control_frame, text="ACTIONS", font=("Roboto", 12, "bold"), text_color=COLORS["text_sub"]).pack(
-            anchor="w", padx=15, pady=(15, 10))
-        self.start_btn = ctk.CTkButton(control_frame, text="▶ START AUTOMATION", height=45, fg_color=COLORS["success"],
-                                       hover_color="#00a844", font=("Roboto", 13, "bold"), command=self.start_threads)
-        self.start_btn.pack(fill="x", padx=15, pady=(0, 10))
-        self.stop_btn = ctk.CTkButton(control_frame, text="⏹ STOP PROCESS", height=45, fg_color=COLORS["danger"],
-                                      hover_color="#b71c1c", font=("Roboto", 13, "bold"), state="disabled",
-                                      command=self.stop_automation)
-        self.stop_btn.pack(fill="x", padx=15, pady=(0, 10))
-        reset_btn = ctk.CTkButton(control_frame, text="⚡ FORCE RESET", height=35, fg_color=COLORS["warning"],
-                                  hover_color="#e65100", text_color="#222", font=("Roboto", 11, "bold"),
-                                  command=self.system_full_reset)
-        reset_btn.pack(fill="x", padx=15, pady=(0, 15))
+        ctk.CTkLabel(control_frame, text="ACTIONS", font=("Roboto", 13, "bold"), text_color=COLORS["text_sub"]).pack(
+            anchor="w", padx=20, pady=(15, 10))
 
-        # Link Queue UI
-        right_panel = ctk.CTkFrame(self.tab_dash, fg_color=COLORS["bg_card"], corner_radius=12, border_width=1,
+        self.start_btn = ctk.CTkButton(control_frame, text="▶ START", height=45, fg_color=COLORS["success"],
+                                       corner_radius=10,
+                                       hover_color="#1E8233", font=("Roboto", 14, "bold"), command=self.start_threads)
+        self.start_btn.pack(fill="x", padx=20, pady=(0, 10))
+
+        self.stop_btn = ctk.CTkButton(control_frame, text="⏹ STOP PROCESS", height=45, fg_color=COLORS["danger"],
+                                      corner_radius=10,
+                                      hover_color="#C53030", font=("Roboto", 14, "bold"), state="disabled",
+                                      command=self.stop_automation)
+        self.stop_btn.pack(fill="x", padx=20, pady=(0, 10))
+
+        reset_btn = ctk.CTkButton(control_frame, text="⚡ FORCE RESET", height=35, fg_color=COLORS["warning"],
+                                  corner_radius=10,
+                                  hover_color="#B79034", text_color="#1A202C", font=("Roboto", 12, "bold"),
+                                  command=self.system_full_reset)
+        reset_btn.pack(fill="x", padx=20, pady=(0, 10))
+
+        reboot_btn = ctk.CTkButton(control_frame, text="🔄 REBOOT ALL DEVICES", height=35, fg_color=COLORS["danger"],
+                                   corner_radius=10,
+                                   hover_color="#C53030", font=("Roboto", 12, "bold"),
+                                   command=self.reboot_all_devices)
+        reboot_btn.pack(fill="x", padx=20, pady=(0, 15))
+
+        right_panel = ctk.CTkFrame(self.tab_dash, fg_color=COLORS["bg_card"], corner_radius=15, border_width=1,
                                    border_color=COLORS["border"])
         right_panel.grid(row=0, column=1, sticky="nsew")
 
         header = ctk.CTkFrame(right_panel, fg_color="transparent")
-        header.pack(fill="x", padx=20, pady=15)
+        header.pack(fill="x", padx=25, pady=20)
 
-        title_lbl = ctk.CTkLabel(header, text="🔗 LINK QUEUE", font=("Roboto", 16, "bold"),
+        title_lbl = ctk.CTkLabel(header, text="🔗 LINK QUEUE", font=("Roboto", 18, "bold"),
                                  text_color=COLORS["primary"])
         title_lbl.pack(side="left")
 
-        self.add_pair_btn = ctk.CTkButton(header, text="➕ ADD LINK", width=110, height=32,
-                                          fg_color=COLORS["primary"], hover_color="#2b6b9e",
-                                          font=("Roboto", 12, "bold"), text_color="white", command=self.add_pair)
+        self.add_pair_btn = ctk.CTkButton(header, text="➕ ADD LINK", width=120, height=35, corner_radius=8,
+                                          fg_color=COLORS["primary"], hover_color="#3B82F6",
+                                          font=("Roboto", 13, "bold"), text_color="white", command=self.add_pair)
         self.add_pair_btn.pack(side="right")
 
         self.pairs_scroll = ctk.CTkScrollableFrame(right_panel, fg_color="transparent")
-        self.pairs_scroll.pack(fill="both", expand=True, padx=10, pady=10)
+        self.pairs_scroll.pack(fill="both", expand=True, padx=15, pady=15)
         self.add_pair()
 
     def setup_devices(self):
         self.tab_devices.grid_columnconfigure(0, weight=1)
         self.tab_devices.grid_rowconfigure(1, weight=1)
         toolbar = ctk.CTkFrame(self.tab_devices, fg_color="transparent")
-        toolbar.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        toolbar.grid(row=0, column=0, sticky="ew", pady=(0, 15))
         self.device_count_label = ctk.CTkLabel(toolbar, text="Connected: 0", font=FONT_SUBHEADER)
-        self.device_count_label.pack(side="left")
-        refresh_btn = ctk.CTkButton(toolbar, text="🔄 Refresh List", width=120, height=30,
-                                    fg_color=COLORS["bg_lighter"], command=self.refresh_devices)
-        refresh_btn.pack(side="right")
+        self.device_count_label.pack(side="left", padx=10)
+        refresh_btn = ctk.CTkButton(toolbar, text="🔄 Refresh List", width=130, height=35, corner_radius=8,
+                                    font=("Roboto", 12, "bold"),
+                                    fg_color=COLORS["bg_card"], border_width=1, border_color=COLORS["border"],
+                                    command=self.refresh_devices)
+        refresh_btn.pack(side="right", padx=10)
         self.device_config_frame = ctk.CTkScrollableFrame(self.tab_devices, fg_color=COLORS["bg_lighter"],
-                                                          corner_radius=10)
+                                                          corner_radius=12)
         self.device_config_frame.grid(row=1, column=0, sticky="nsew")
 
     def setup_config(self):
         container = ctk.CTkFrame(self.tab_config, fg_color="transparent")
         container.pack(fill="both", expand=True, padx=20, pady=20)
 
-        f1 = ctk.CTkFrame(container, fg_color=COLORS["bg_card"], corner_radius=10, border_width=1,
+        f1 = ctk.CTkFrame(container, fg_color=COLORS["bg_card"], corner_radius=15, border_width=1,
                           border_color=COLORS["border"])
-        f1.pack(fill="x", pady=(0, 15))
+        f1.pack(fill="x", pady=(0, 20))
         ctk.CTkLabel(f1, text="CORE SETTINGS", font=FONT_SUBHEADER, text_color=COLORS["primary"]).pack(anchor="w",
-                                                                                                       padx=20,
-                                                                                                       pady=(15, 10))
+                                                                                                       padx=25,
+                                                                                                       pady=(20, 15))
         f1_inner = ctk.CTkFrame(f1, fg_color="transparent")
-        f1_inner.pack(fill="x", padx=20, pady=(0, 20))
+        f1_inner.pack(fill="x", padx=25, pady=(0, 25))
 
-        ctk.CTkLabel(f1_inner, text="Chrome Driver Path:", font=FONT_BODY).grid(row=0, column=0, sticky="w", pady=5)
-        self.driver_entry = ctk.CTkEntry(f1_inner, width=400, height=35)
-        self.driver_entry.grid(row=0, column=1, padx=10, pady=5)
+        ctk.CTkLabel(f1_inner, text="Chrome Driver Path:", font=FONT_BODY).grid(row=0, column=0, sticky="w", pady=10)
+        self.driver_entry = ctk.CTkEntry(f1_inner, width=450, height=40, corner_radius=8, fg_color=COLORS["bg_main"],
+                                         border_color=COLORS["border"])
+        self.driver_entry.grid(row=0, column=1, padx=15, pady=10)
         self.driver_entry.insert(0, self.chrome_driver_path)
-        ctk.CTkButton(f1_inner, text="Browse", width=80, height=35, fg_color=COLORS["bg_lighter"],
+        ctk.CTkButton(f1_inner, text="Browse", width=90, height=40, corner_radius=8, fg_color=COLORS["bg_lighter"],
+                      border_width=1, border_color=COLORS["border"],
                       command=self.browse_driver).grid(row=0, column=2, padx=5)
 
-        ctk.CTkLabel(f1_inner, text="Global Cookie File:", font=FONT_BODY).grid(row=1, column=0, sticky="w", pady=15)
-        self.cookie_entry = ctk.CTkEntry(f1_inner, width=400, height=35)
-        self.cookie_entry.grid(row=1, column=1, padx=10, pady=15)
+        ctk.CTkLabel(f1_inner, text="Global Cookie File:", font=FONT_BODY).grid(row=1, column=0, sticky="w", pady=10)
+        self.cookie_entry = ctk.CTkEntry(f1_inner, width=450, height=40, corner_radius=8, fg_color=COLORS["bg_main"],
+                                         border_color=COLORS["border"])
+        self.cookie_entry.grid(row=1, column=1, padx=15, pady=10)
         self.cookie_entry.insert(0, self.global_cookie_path)
-        ctk.CTkButton(f1_inner, text="Browse", width=80, height=35, fg_color=COLORS["bg_lighter"],
+        ctk.CTkButton(f1_inner, text="Browse", width=90, height=40, corner_radius=8, fg_color=COLORS["bg_lighter"],
+                      border_width=1, border_color=COLORS["border"],
                       command=self.browse_global_cookie).grid(row=1, column=2, padx=5)
 
-        f2 = ctk.CTkFrame(container, fg_color=COLORS["bg_card"], corner_radius=10, border_width=1,
+        f2 = ctk.CTkFrame(container, fg_color=COLORS["bg_card"], corner_radius=15, border_width=1,
                           border_color=COLORS["border"])
-        f2.pack(fill="x", pady=(0, 15))
+        f2.pack(fill="x", pady=(0, 20))
         ctk.CTkLabel(f2, text="TIMING & SAFETY", font=FONT_SUBHEADER, text_color=COLORS["primary"]).pack(anchor="w",
-                                                                                                         padx=20,
-                                                                                                         pady=(15, 10))
+                                                                                                         padx=25,
+                                                                                                         pady=(20, 15))
         f2_inner = ctk.CTkFrame(f2, fg_color="transparent")
-        f2_inner.pack(fill="x", padx=20, pady=(0, 20))
-        ctk.CTkLabel(f2_inner, text="Random Delay (Seconds):", font=FONT_BODY).grid(row=0, column=0, sticky="w", pady=5)
+        f2_inner.pack(fill="x", padx=25, pady=(0, 25))
+        ctk.CTkLabel(f2_inner, text="Random Delay (Seconds):", font=FONT_BODY).grid(row=0, column=0, sticky="w",
+                                                                                    pady=10)
         d_box = ctk.CTkFrame(f2_inner, fg_color="transparent")
-        d_box.grid(row=0, column=1, sticky="w", padx=10)
-        self.min_delay = ctk.CTkEntry(d_box, width=60, height=35, justify="center")
+        d_box.grid(row=0, column=1, sticky="w", padx=15)
+        self.min_delay = ctk.CTkEntry(d_box, width=70, height=40, justify="center", corner_radius=8,
+                                      fg_color=COLORS["bg_main"], border_color=COLORS["border"])
         self.min_delay.pack(side="left")
         self.min_delay.insert(0, "5")
-        ctk.CTkLabel(d_box, text="  to  ").pack(side="left")
-        self.max_delay = ctk.CTkEntry(d_box, width=60, height=35, justify="center")
+        ctk.CTkLabel(d_box, text="  to  ", font=FONT_BODY).pack(side="left")
+        self.max_delay = ctk.CTkEntry(d_box, width=70, height=40, justify="center", corner_radius=8,
+                                      fg_color=COLORS["bg_main"], border_color=COLORS["border"])
         self.max_delay.pack(side="left")
         self.max_delay.insert(0, "10")
-        ctk.CTkLabel(f2_inner, text="Max Retries:", font=FONT_BODY).grid(row=1, column=0, sticky="w", pady=15)
-        self.retry_count = ctk.CTkEntry(f2_inner, width=60, height=35, justify="center")
-        self.retry_count.grid(row=1, column=1, sticky="w", padx=10)
+
+        ctk.CTkLabel(f2_inner, text="Max Retries:", font=FONT_BODY).grid(row=1, column=0, sticky="w", pady=10)
+        self.retry_count = ctk.CTkEntry(f2_inner, width=70, height=40, justify="center", corner_radius=8,
+                                        fg_color=COLORS["bg_main"], border_color=COLORS["border"])
+        self.retry_count.grid(row=1, column=1, sticky="w", padx=15)
         self.retry_count.insert(0, "3")
 
-        ctk.CTkButton(container, text="💾 SAVE CONFIGURATION", height=45, font=("Roboto", 13, "bold"),
-                      fg_color=COLORS["primary"], command=self.save_config).pack(pady=10)
+        ctk.CTkButton(container, text="💾 SAVE CONFIGURATION", height=50, width=250, font=("Roboto", 14, "bold"),
+                      corner_radius=10,
+                      fg_color=COLORS["primary"], command=self.save_config).pack(pady=15)
 
-    # --- MODIFIED: TREEVIEW SYSTEM LOGS ---
     def setup_logs(self):
         toolbar = ctk.CTkFrame(self.tab_logs, fg_color="transparent")
-        toolbar.pack(fill="x", pady=(0, 10))
+        toolbar.pack(fill="x", pady=(0, 15))
 
         self.filter_var = ctk.StringVar(value="All")
         ctk.CTkRadioButton(toolbar, text="All Logs", variable=self.filter_var, value="All", command=self.filter_logs,
-                           fg_color=COLORS["primary"]).pack(side="left", padx=10)
-        ctk.CTkRadioButton(toolbar, text="Success Only", variable=self.filter_var, value="Success",
-                           command=self.filter_logs, fg_color=COLORS["success"]).pack(side="left", padx=10)
-        ctk.CTkRadioButton(toolbar, text="Errors Only", variable=self.filter_var, value="Error",
-                           command=self.filter_logs, fg_color=COLORS["danger"]).pack(side="left", padx=10)
+                           font=FONT_BODY,
+                           fg_color=COLORS["primary"]).pack(side="left", padx=15)
+        ctk.CTkRadioButton(toolbar, text="Success Only", variable=self.filter_var, value="Success", font=FONT_BODY,
+                           command=self.filter_logs, fg_color=COLORS["success"]).pack(side="left", padx=15)
+        ctk.CTkRadioButton(toolbar, text="Errors Only", variable=self.filter_var, value="Error", font=FONT_BODY,
+                           command=self.filter_logs, fg_color=COLORS["danger"]).pack(side="left", padx=15)
 
-        ctk.CTkButton(toolbar, text="🗑 Clear", width=80, height=30, fg_color=COLORS["bg_lighter"],
-                      hover_color=COLORS["danger"], command=self.clear_logs).pack(side="right")
-        ctk.CTkButton(toolbar, text="📤 Export", width=80, height=30, fg_color=COLORS["bg_lighter"],
+        ctk.CTkButton(toolbar, text="🗑 Clear", width=90, height=35, corner_radius=8, fg_color=COLORS["bg_card"],
+                      font=("Roboto", 12, "bold"), border_width=1, border_color=COLORS["border"],
+                      hover_color=COLORS["danger"], command=self.clear_logs).pack(side="right", padx=(5, 0))
+        ctk.CTkButton(toolbar, text="📤 Export", width=90, height=35, corner_radius=8, fg_color=COLORS["bg_card"],
+                      font=("Roboto", 12, "bold"), border_width=1, border_color=COLORS["border"],
                       hover_color=COLORS["primary"], command=self.export_logs).pack(side="right", padx=5)
 
-        # Create Treeview Styling for Dark Mode
         style = ttk.Style()
         style.theme_use("default")
         style.configure("Treeview",
                         background=COLORS["bg_card"],
                         foreground=COLORS["text_main"],
-                        rowheight=35,
+                        rowheight=40,
                         fieldbackground=COLORS["bg_card"],
                         bordercolor=COLORS["border"],
                         borderwidth=0,
-                        font=("Roboto", 11))
+                        font=("Roboto", 12))
         style.map('Treeview', background=[('selected', COLORS["primary"])])
 
         style.configure("Treeview.Heading",
                         background=COLORS["bg_lighter"],
                         foreground=COLORS["text_main"],
                         relief="flat",
-                        font=("Roboto", 12, "bold"))
+                        font=("Roboto", 13, "bold"))
         style.map("Treeview.Heading", background=[('active', COLORS["bg_main"])])
 
         tree_frame = ctk.CTkFrame(self.tab_logs, corner_radius=0, fg_color="transparent")
@@ -496,19 +492,17 @@ del "%~f0"
         self.log_tree.heading("Caption", text="CAPTION")
         self.log_tree.heading("Status", text="STATUS")
 
-        self.log_tree.column("Time", width=100, anchor="center")
-        self.log_tree.column("Model", width=120, anchor="center")
-        self.log_tree.column("Link", width=250, anchor="w")
-        self.log_tree.column("Caption", width=250, anchor="w")
-        self.log_tree.column("Status", width=150, anchor="center")
+        self.log_tree.column("Time", width=120, anchor="center")
+        self.log_tree.column("Model", width=140, anchor="center")
+        self.log_tree.column("Link", width=280, anchor="w")
+        self.log_tree.column("Caption", width=280, anchor="w")
+        self.log_tree.column("Status", width=160, anchor="center")
 
-        # Scrollbar
         scrollbar = ttk.Scrollbar(tree_frame, orient="vertical", command=self.log_tree.yview)
         self.log_tree.configure(yscrollcommand=scrollbar.set)
         scrollbar.pack(side="right", fill="y")
         self.log_tree.pack(side="left", fill="both", expand=True)
 
-        # Tags for Colors
         self.log_tree.tag_configure("SUCCESS", foreground=COLORS["success"])
         self.log_tree.tag_configure("ERROR", foreground=COLORS["danger"])
         self.log_tree.tag_configure("WARN", foreground=COLORS["warning"])
@@ -518,69 +512,57 @@ del "%~f0"
         container = ctk.CTkFrame(self.tab_adb, fg_color="transparent")
         container.pack(fill="both", expand=True, padx=20, pady=20)
 
-        f1 = ctk.CTkFrame(container, fg_color=COLORS["bg_card"], corner_radius=10, border_width=1,
+        f1 = ctk.CTkFrame(container, fg_color=COLORS["bg_card"], corner_radius=15, border_width=1,
                           border_color=COLORS["border"])
-        f1.pack(fill="x", pady=(0, 15))
+        f1.pack(fill="x", pady=(0, 20))
         ctk.CTkLabel(f1, text="✈️ AIRPLANE MODE (ALL DEVICES)", font=FONT_SUBHEADER, text_color=COLORS["primary"]).pack(
-            anchor="w", padx=20, pady=(15, 10))
+            anchor="w", padx=25, pady=(20, 15))
 
         btn_frame1 = ctk.CTkFrame(f1, fg_color="transparent")
-        btn_frame1.pack(fill="x", padx=20, pady=(0, 20))
+        btn_frame1.pack(fill="x", padx=25, pady=(0, 25))
 
-        ctk.CTkButton(btn_frame1, text="Turn ON Airplane Mode", height=40, fg_color=COLORS["warning"],
-                      hover_color="#e65100", text_color="#222", font=("Roboto", 12, "bold"),
-                      command=lambda: self.toggle_airplane_mode(True)).pack(side="left", padx=(0, 10))
-        ctk.CTkButton(btn_frame1, text="Turn OFF Airplane Mode", height=40, fg_color=COLORS["success"],
-                      hover_color="#00a844", font=("Roboto", 12, "bold"),
+        ctk.CTkButton(btn_frame1, text="Turn ON Airplane Mode", height=45, corner_radius=8, fg_color=COLORS["warning"],
+                      hover_color="#B79034", text_color="#1A202C", font=("Roboto", 13, "bold"),
+                      command=lambda: self.toggle_airplane_mode(True)).pack(side="left", padx=(0, 15))
+        ctk.CTkButton(btn_frame1, text="Turn OFF Airplane Mode", height=45, corner_radius=8, fg_color=COLORS["success"],
+                      hover_color="#1E8233", font=("Roboto", 13, "bold"),
                       command=lambda: self.toggle_airplane_mode(False)).pack(side="left")
 
-        f2 = ctk.CTkFrame(container, fg_color=COLORS["bg_card"], corner_radius=10, border_width=1,
+        f2 = ctk.CTkFrame(container, fg_color=COLORS["bg_card"], corner_radius=15, border_width=1,
                           border_color=COLORS["border"])
-        f2.pack(fill="x", pady=(0, 15))
+        f2.pack(fill="x", pady=(0, 20))
         ctk.CTkLabel(f2, text="📦 BATCH APK INSTALLER", font=FONT_SUBHEADER, text_color=COLORS["primary"]).pack(
-            anchor="w", padx=20, pady=(15, 10))
+            anchor="w", padx=25, pady=(20, 15))
 
         f2_inner = ctk.CTkFrame(f2, fg_color="transparent")
-        f2_inner.pack(fill="x", padx=20, pady=(0, 20))
+        f2_inner.pack(fill="x", padx=25, pady=(0, 25))
 
         ctk.CTkLabel(f2_inner, text="APK File Path:", font=FONT_BODY).grid(row=0, column=0, sticky="w", pady=5)
-        self.apk_entry = ctk.CTkEntry(f2_inner, width=400, height=35)
-        self.apk_entry.grid(row=0, column=1, padx=10, pady=5)
+        self.apk_entry = ctk.CTkEntry(f2_inner, width=450, height=40, corner_radius=8, fg_color=COLORS["bg_main"],
+                                      border_color=COLORS["border"])
+        self.apk_entry.grid(row=0, column=1, padx=15, pady=5)
 
-        ctk.CTkButton(f2_inner, text="Browse", width=80, height=35, fg_color=COLORS["bg_lighter"],
+        ctk.CTkButton(f2_inner, text="Browse", width=90, height=40, corner_radius=8, fg_color=COLORS["bg_lighter"],
+                      border_width=1, border_color=COLORS["border"],
                       command=self.browse_apk).grid(row=0, column=2, padx=5)
-        ctk.CTkButton(f2_inner, text="Install to All Devices", height=35, font=("Roboto", 12, "bold"),
-                      fg_color=COLORS["primary"], command=self.install_apk_all).grid(row=0, column=3, padx=10)
+        ctk.CTkButton(f2_inner, text="Install to All Devices", height=40, corner_radius=8, font=("Roboto", 13, "bold"),
+                      fg_color=COLORS["primary"], command=self.install_apk_all).grid(row=0, column=3, padx=15)
 
-        f3 = ctk.CTkFrame(container, fg_color=COLORS["bg_card"], corner_radius=10, border_width=1,
+        f3 = ctk.CTkFrame(container, fg_color=COLORS["bg_card"], corner_radius=15, border_width=1,
                           border_color=COLORS["border"])
-        f3.pack(fill="x", pady=(0, 15))
-        ctk.CTkLabel(f3, text="⚡ POWER MANAGEMENT", font=FONT_SUBHEADER, text_color=COLORS["primary"]).pack(anchor="w",
-                                                                                                            padx=20,
-                                                                                                            pady=(
-                                                                                                                15, 10))
+        f3.pack(fill="x", pady=(0, 20))
+        ctk.CTkLabel(f3, text="🛜 ADB WIRELESS (WIFI)", font=FONT_SUBHEADER, text_color=COLORS["primary"]).pack(
+            anchor="w", padx=25, pady=(20, 15))
 
         btn_frame3 = ctk.CTkFrame(f3, fg_color="transparent")
-        btn_frame3.pack(fill="x", padx=20, pady=(0, 20))
+        btn_frame3.pack(fill="x", padx=25, pady=(0, 25))
 
-        ctk.CTkButton(btn_frame3, text="🔄 Reboot All Devices", height=40, fg_color=COLORS["danger"],
-                      hover_color="#b71c1c", font=("Roboto", 12, "bold"), command=self.reboot_all_devices).pack(
-            side="left")
-
-        f4 = ctk.CTkFrame(container, fg_color=COLORS["bg_card"], corner_radius=10, border_width=1,
-                          border_color=COLORS["border"])
-        f4.pack(fill="x", pady=(0, 15))
-        ctk.CTkLabel(f4, text="🛜 ADB WIRELESS (WIFI)", font=FONT_SUBHEADER, text_color=COLORS["primary"]).pack(
-            anchor="w", padx=20, pady=(15, 10))
-
-        btn_frame4 = ctk.CTkFrame(f4, fg_color="transparent")
-        btn_frame4.pack(fill="x", padx=20, pady=(0, 20))
-
-        ctk.CTkButton(btn_frame4, text="Turn ON Wireless ADB", height=40, fg_color=COLORS["success"],
-                      hover_color="#00a844", font=("Roboto", 12, "bold"), command=self.enable_wireless_adb).pack(
-            side="left", padx=(0, 10))
-        ctk.CTkButton(btn_frame4, text="Disconnect Wireless Devices", height=40, fg_color=COLORS["warning"],
-                      hover_color="#e65100", text_color="#222", font=("Roboto", 12, "bold"),
+        ctk.CTkButton(btn_frame3, text="Turn ON Wireless ADB", height=45, corner_radius=8, fg_color=COLORS["success"],
+                      hover_color="#1E8233", font=("Roboto", 13, "bold"), command=self.enable_wireless_adb).pack(
+            side="left", padx=(0, 15))
+        ctk.CTkButton(btn_frame3, text="Disconnect Wireless Devices", height=45, corner_radius=8,
+                      fg_color=COLORS["warning"],
+                      hover_color="#B79034", text_color="#1A202C", font=("Roboto", 13, "bold"),
                       command=self.disconnect_wireless_adb).pack(side="left")
 
     def toggle_airplane_mode(self, state):
@@ -735,7 +717,7 @@ del "%~f0"
     def add_pair(self):
         pair_num = len(self.pair_widgets) + 1
         new_pair = PairFrame(self.pairs_scroll, pair_num, lambda: self.remove_pair(new_pair))
-        new_pair.pack(fill="x", padx=5, pady=5)
+        new_pair.pack(fill="x", padx=5, pady=10)
         self.pair_widgets.append(new_pair)
 
     def remove_pair(self, frame_to_remove):
@@ -765,7 +747,6 @@ del "%~f0"
         self.save_settings()
         messagebox.showinfo("Saved", "Configuration updated successfully.")
 
-    # --- MODIFIED: FILTER, CLEAR, AND EXPORT LOGS METHODS ---
     def filter_logs(self):
         filter_value = self.filter_var.get()
         for item in self.log_tree.get_children():
@@ -780,7 +761,6 @@ del "%~f0"
         file = filedialog.asksaveasfilename(defaultextension=".txt", filetypes=[("Text files", "*.txt")])
         if file:
             with open(file, "w") as f:
-                # Add headers for export readability
                 f.write(f"{'TIME':<12} | {'DEVICE':<10} | {'LINK':<40} | {'CAPTION':<40} | {'STATUS'}\n")
                 f.write("-" * 120 + "\n")
                 for log_entry in self.all_logs:
@@ -841,7 +821,6 @@ del "%~f0"
         except Exception as e:
             self.log_row("SYSTEM", "---", "---", "RESET ERROR", "ERROR")
 
-    # --- MODIFIED: TREEVIEW LOG ROW ENTRY ---
     def log_row(self, device, link, caption, status, level="INFO"):
         timestamp = self.get_manila_time()
         d_name = device[:8] if device else "SYSTEM"
@@ -870,12 +849,10 @@ del "%~f0"
         status = log_entry["status"]
         level = log_entry["level"]
 
-        # Truncate text on display lang kung masyadong mahaba (para malinis tingnan sa table)
         disp_link = (link[:47] + '...') if len(link) > 50 else link
         disp_cap = (cap[:47] + '...') if len(cap) > 50 else cap
 
         item = self.log_tree.insert("", "end", values=(ts, dev, disp_link, disp_cap, status), tags=(level,))
-        # Auto scroll to bottom
         self.log_tree.see(item)
 
     def refresh_devices(self):
@@ -901,12 +878,11 @@ del "%~f0"
 
             for device in self.devices:
                 device_frame = DeviceFrame(self.device_config_frame, device)
-                device_frame.pack(fill="x", padx=10, pady=5)
+                device_frame.pack(fill="x", padx=15, pady=8)
                 self.device_widgets.append(device_frame)
                 threading.Thread(target=self.get_device_info, args=(device, device_frame), daemon=True).start()
 
         except Exception as e:
-            print(f"ADB Error: {e}")
             self.device_count_label.configure(text="Devices: ADB Error")
 
     def get_device_info(self, device_id, device_frame):
@@ -994,14 +970,13 @@ del "%~f0"
                                     EC.element_to_be_clickable((By.XPATH, trigger_xpath)))
                                 trigger_btn.click()
                             except:
-                                print(f"[{device_id}] Direct text box search...")
                                 try:
                                     trigger_xpath = "//div[contains(@aria-label, 'mind')]"
                                     trigger = WebDriverWait(driver, 1).until(
                                         EC.element_to_be_clickable((By.XPATH, trigger_xpath)))
                                     trigger.click()
                                 except:
-                                    print(f"[{device_id}] Proceeding to textbox search...")
+                                    pass
 
                             post_box = WebDriverWait(driver, 1).until(EC.element_to_be_clickable(
                                 (By.XPATH, "//div[@role='textbox' and @contenteditable='true'] | //textarea")
@@ -1022,7 +997,8 @@ del "%~f0"
                             time.sleep(2)
 
                             try:
-                                trigger = wait.until(EC.element_to_be_clickable((By.XPATH, "//div[contains(@aria-label, 'mind')] | //textarea | //div[@role='textbox']")))
+                                trigger = wait.until(EC.element_to_be_clickable((By.XPATH,
+                                                                                 "//div[contains(@aria-label, 'mind')] | //textarea | //div[@role='textbox']")))
                                 trigger.click()
                                 time.sleep(6)
                             except:
@@ -1043,7 +1019,6 @@ del "%~f0"
                                 post_box.send_keys(sel_cap)
                                 time.sleep(2)
 
-                        print(f"[{device_id}] Hinahanap ang Post button...")
                         post_xpath = "//button[@name='view_post'] | //button[@value='Post'] | //input[@value='Post'] | //div[translate(@aria-label, 'POST', 'post')='post'] | //span[translate(text(), 'POST', 'post')='post']"
                         post_btn = wait.until(EC.presence_of_element_located((By.XPATH, post_xpath)))
                         driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", post_btn)
@@ -1062,7 +1037,6 @@ del "%~f0"
                         time.sleep(delay)
 
                     except Exception as e:
-                        print(f"[{device_id}] Error sa pag-post: {e}")
                         self.log_row(device_id, link, "---", "SKIPPING (ERROR)", "ERROR")
                         self.total_attempts += 1
                         self.update_stats()
@@ -1070,7 +1044,6 @@ del "%~f0"
 
                 driver.quit()
             except Exception as e:
-                print(f"[{device_id}] Nag-crash ang Session: {e}")
                 self.log_row(device_id, "---", "---", "ACCOUNT FAILED", "ERROR")
                 self.error_count += 1
                 self.total_attempts += 1
@@ -1082,7 +1055,7 @@ del "%~f0"
                         pass
 
     def update_stats(self):
-        self.after(0, lambda: self.overall_stats.update_stats(self.total_shares, self.error_count, self.total_attempts))
+        self.after(0, lambda: self.overall_stats.update_stats(self.total_shares, self.error_count))
 
     def start_threads(self):
         if not self.devices:
@@ -1163,7 +1136,4 @@ del "%~f0"
 
 if __name__ == "__main__":
     app = FacebookAutomationGUI()
-
     app.mainloop()
-
-
