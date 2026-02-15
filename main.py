@@ -12,6 +12,8 @@ import sys
 import urllib.request
 import webbrowser
 import queue
+from selenium.webdriver.chrome.service import Service as ChromeService
+import logging
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
@@ -22,7 +24,7 @@ from selenium.webdriver.common.keys import Keys
 from selenium.common.exceptions import WebDriverException
 from datetime import datetime
 
-__version__ = "3"
+__version__ = "4"
 UPDATE_URL = "https://raw.githubusercontent.com/versozadarwin23/autopost/refs/heads/main/main.py"
 VERSION_CHECK_URL = "https://raw.githubusercontent.com/versozadarwin23/autopost/refs/heads/main/version.txt"
 
@@ -1156,13 +1158,32 @@ del "%~f0"
         options.add_experimental_option("androidDeviceSerial", device_id)
         args = [
             "--blink-settings=imagesEnabled=false,videoAutoplayEnabled=false",
-            "--disable-notifications", "--no-sandbox", "--mute-audio",
-            "--disable-dev-shm-usage", "--disable-popup-blocking", "--disable-infobars"
+            "--disable-notifications",
+            "--no-sandbox",
+            "--mute-audio",
+            "--disable-popup-blocking",
+            "--disable-infobars"
+            "--blink-settings=imagesEnabled=false,videoAutoplayEnabled=false",  # Iwas load ng heavy media
+            "--disable-notifications",
+            "--disable-dev-shm-usage",  # Importante: Iwas memory crash sa Linux/Android environment
+            # "--disable-gpu",  # Iwas GPU errors
+            "--disable-extensions",  # Bawas memory usage
+            "--disable-infobars",
+            "--ignore-certificate-errors"
+            "--renderer-process-limit=1",  # Lilimitahan ang Chrome sa 1 process lang
+            "--single-process",
+            "--disable-background-networking",
+            "--disable-sync",
+            "--disable-translate"
+            "--disk-cache-size=1"
+            "--media-cache-size=1"
         ]
         for arg in args:
             options.add_argument(arg)
         options.add_experimental_option("excludeSwitches", ["enable-logging", "enable-automation"])
         service = Service(executable_path=self.chrome_driver_path)
+
+        service = ChromeService(executable_path=self.chrome_driver_path, log_output=os.devnull)
 
         try:
             pre_wait = float(self.dash_pre_delay.get())
@@ -1177,9 +1198,12 @@ del "%~f0"
         CREATE_NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
 
         while self.is_running:
+            # Check limit
             if limit_per_dev > 0 and local_processed_count >= limit_per_dev:
                 self.log_row(device_id, "---", "---", "DEVICE REACHED LIMIT", "INFO")
                 break
+
+            # Get Cookie
             try:
                 cookie_data = self.cookie_queue.get(timeout=2)
                 cookie_str = cookie_data['cookie']
@@ -1193,14 +1217,35 @@ del "%~f0"
             local_processed_count += 1
 
             try:
+                # Clear Chrome Data
                 subprocess.run(["adb", "-s", device_id, "shell", "pm", "clear", "com.android.chrome"],
                                capture_output=True, creationflags=CREATE_NO_WINDOW)
                 time.sleep(2)
 
+                # Initialize Driver
                 driver = webdriver.Chrome(service=service, options=options)
                 wait = WebDriverWait(driver, 15)
+
+                # --- NETWORK INTERCEPTION (CDP) ---
+                # Ito ang listahan ng mga patterns na gusto nating i-block.
+                # Kasama dito ang images, media, stylesheets (CSS), at fonts para sobrang bilis.
+                blocked_urls = [
+                    "*.jpg", "*.jpeg", "*.png", "*.gif",  # Images/GIFs
+                    "*.css",  # Styles (Nakakapagpabagal din ito)
+                    "*.mp4", "*.avi",  # Videos
+                    "*.woff", "*.woff2", "*.ttf",  # Fonts (Icons)
+                    "*.ico",  # Favicons
+                    "*favicon*",
+                ]
+
+                # I-enable ang Network Tracking
+                driver.execute_cdp_cmd("Network.enable", {})
+
+                # I-set ang blocking rules
+                driver.execute_cdp_cmd("Network.setBlockedURLs", {"urls": blocked_urls})
                 driver.get("https://m.facebook.com")
 
+                # Inject Cookies
                 for c in self.parse_cookies(cookie_str):
                     try:
                         driver.add_cookie(c)
@@ -1208,10 +1253,12 @@ del "%~f0"
                         continue
                 driver.refresh()
 
+                # Check Login Success
                 try:
                     wait.until(EC.presence_of_element_located((By.XPATH,
                                                                "//div[@aria-label=\"What's on your mind?\"] | //div[@role='feed'] | //a[contains(@href, 'messages')]")))
                 except:
+                    # Check for "Open App" blocker
                     try:
                         open_app_element = driver.find_elements(By.XPATH,
                                                                 "//div[@data-mcomponent='TextArea']//span[contains(text(), 'Open app')]")
@@ -1219,12 +1266,14 @@ del "%~f0"
                             raise Exception("Error: Stuck on 'Open app' screen")
                     except:
                         pass
+
                     if "facebook.com" in driver.current_url or "https://www.facebook.com/" in driver.current_url:
                         raise Exception("Account Checkpointed/Not Logged In")
                     continue
 
                 time.sleep(3)
 
+                # Start Posting Loop
                 for link_num, (link, caption_file) in enumerate(self.job_list_global, 1):
                     if not self.is_running: break
                     sel_cap = "---"
@@ -1234,13 +1283,18 @@ del "%~f0"
                         if not self.is_running: break
                         try:
                             driver.get("https://m.facebook.com/composer/")
+
+                            # Find Textbox
                             post_box = wait.until(
                                 EC.element_to_be_clickable((By.XPATH, "//div[@role='textbox'] | //textarea")))
                             post_box.click()
                             time.sleep(1)
-                            post_box.send_keys(link)
-                            time.sleep(15)
 
+                            # Type Link
+                            post_box.send_keys(link)
+                            time.sleep(15)  # Wait for preview
+
+                            # Clear Link Text (Keep Preview)
                             try:
                                 post_box.send_keys(Keys.CONTROL, "a")
                                 time.sleep(0.5)
@@ -1249,6 +1303,7 @@ del "%~f0"
                             except:
                                 driver.execute_script("arguments[0].value = '';", post_box)
 
+                            # Type Caption
                             if caption_file and os.path.exists(caption_file):
                                 try:
                                     with open(caption_file, "r", encoding="utf-8") as f:
@@ -1260,12 +1315,12 @@ del "%~f0"
                                 except Exception as e:
                                     pass
 
-                            # post_xpath = "//button[@name='view_post'] | //button[@value='Post'] | //input[@value='Post'] | //div[translate(@aria-label, 'POST', 'post')='post'] | //span[translate(text(), 'POST', 'post')='post']"
-                            # post_btn = wait.until(EC.presence_of_element_located((By.XPATH, post_xpath)))
-                            # driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", post_btn)
-                            # time.sleep(2)
-                            # driver.execute_script("arguments[0].click();", post_btn)
-                            # time.sleep(15)
+                            post_xpath = "//button[@name='view_post'] | //button[@value='Post'] | //input[@value='Post'] | //div[translate(@aria-label, 'POST', 'post')='post'] | //span[translate(text(), 'POST', 'post')='post']"
+                            post_btn = wait.until(EC.presence_of_element_located((By.XPATH, post_xpath)))
+                            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", post_btn)
+                            time.sleep(2)
+                            driver.execute_script("arguments[0].click();", post_btn)
+                            time.sleep(15)
 
                             self.log_row(device_id, link, sel_cap, f"SUCCESS [L#{link_num}][Acc#{acc_idx}]", "SUCCESS")
                             self.total_shares += 1
@@ -1275,7 +1330,7 @@ del "%~f0"
                             break
 
                         except WebDriverException:
-                            raise
+                            raise  # Ipasa sa outer try/except para mag-reboot
                         except Exception as e:
                             self.log_row(device_id, link, "---", f"RETRYING ({attempt + 1}/3)...", "WARN")
                             time.sleep(3)
@@ -1288,11 +1343,15 @@ del "%~f0"
                         self.log_row(device_id, link, "---", f"SKIP [L#{link_num}] (FAILED)", "ERROR")
                         self.total_attempts += 1
                         self.update_stats()
+
+                    # Random Delay between posts
                     try:
                         delay = random.randint(int(self.min_delay.get() or 5), int(self.max_delay.get() or 10))
                     except:
                         delay = random.randint(5, 10)
                     time.sleep(delay)
+
+                # Done with this account
                 driver.quit()
 
             except WebDriverException as e:
@@ -1301,10 +1360,21 @@ del "%~f0"
                     if driver: driver.quit()
                 except:
                     pass
+
+                # Reboot Sequence Fix
                 try:
+                    time.sleep(5)
                     subprocess.Popen(["adb", "-s", device_id, "reboot"], creationflags=CREATE_NO_WINDOW)
-                    self.log_row(device_id, "---", "---", "WAITING 20s FOR BOOT...", "WARN")
-                    time.sleep(20)
+                    self.log_row(device_id, "---", "---", "WAITING 60 FOR BOOT...", "WARN")
+                    time.sleep(60)
+                    subprocess.run(["adb", "-s", device_id, "shell", "input", "keyevent", "224"],
+                                   creationflags=CREATE_NO_WINDOW)
+                    time.sleep(0.5)
+                    subprocess.run(["adb", "-s", device_id, "shell", "input", "swipe", "200", "500", "200", "0", "300"],
+                                   creationflags=CREATE_NO_WINDOW)
+                    time.sleep(1)
+                    subprocess.run(["adb", "-s", device_id, "shell", "input", "keyevent", "3"],
+                                   creationflags=CREATE_NO_WINDOW)
 
                     self.log_row(device_id, "---", "---", "ATTEMPTING UNLOCK...", "INFO")
                     self.unlock_device_sequence(device_id)
@@ -1312,6 +1382,7 @@ del "%~f0"
                     self.log_row(device_id, "---", "---", "REBOOT COMMAND FAILED", "ERROR")
                 self.cookie_queue.task_done()
                 break
+
             except Exception as e:
                 self.log_row(device_id, "---", "---", f"ACC #{acc_idx} ERR: {str(e)[:20]}", "ERROR")
                 self.error_count += 1
@@ -1327,6 +1398,8 @@ del "%~f0"
                         self.cookie_queue.task_done()
                     except ValueError:
                         pass
+
+        # Cleanup when thread ends
         if device_id in self.active_devices_set:
             self.active_devices_set.remove(device_id)
             self.after(0, lambda: self.overall_stats.update_devices(len(self.active_devices_set)))
