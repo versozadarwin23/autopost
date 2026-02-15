@@ -10,7 +10,8 @@ import random
 import threading
 import sys
 import urllib.request
-import webbrowser  # ADDED FOR CLICKABLE LINKS
+import webbrowser
+import queue
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
@@ -18,9 +19,10 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.keys import Keys
+from selenium.common.exceptions import WebDriverException
 from datetime import datetime
 
-__version__ = "2"  # Incremented version locally
+__version__ = "3"
 UPDATE_URL = "https://raw.githubusercontent.com/versozadarwin23/autopost/refs/heads/main/main.py"
 VERSION_CHECK_URL = "https://raw.githubusercontent.com/versozadarwin23/autopost/refs/heads/main/version.txt"
 
@@ -106,8 +108,11 @@ class DeviceFrame(ctk.CTkFrame):
 
     def update_device_info(self, model, version):
         info_text = f"{model} • Android {version}"
-        self.info_label.configure(text=info_text)
-
+        try:
+            if self.info_label.winfo_exists():
+                self.info_label.configure(text=info_text)
+        except Exception:
+            pass
 
 class PairFrame(ctk.CTkFrame):
     def __init__(self, parent, pair_num, on_remove):
@@ -167,7 +172,7 @@ class FacebookAutomationGUI(ctk.CTk):
         super().__init__()
 
         self.title(f"AutoPost V{__version__}")
-        self.geometry("1280x800")
+        self.geometry("1280x900")
         self.after(0, lambda: self.state("zoomed"))
         self.configure(fg_color=COLORS["bg_main"])
 
@@ -175,6 +180,7 @@ class FacebookAutomationGUI(ctk.CTk):
         self.chrome_driver_path = "chromedriver.exe"
         self.global_cookie_path = ""
         self.devices = []
+        self.active_devices_set = set()
         self.device_resolutions = {}
         self.device_widgets = []
         self.pair_widgets = []
@@ -185,6 +191,9 @@ class FacebookAutomationGUI(ctk.CTk):
         self.all_logs = []
         self.saved_settings = {}
 
+        self.cookie_queue = queue.Queue()
+        self.job_list_global = []
+
         threading.Thread(target=self.device_monitor_thread, daemon=True).start()
 
         self.load_settings()
@@ -194,7 +203,10 @@ class FacebookAutomationGUI(ctk.CTk):
 
         self.protocol("WM_DELETE_WINDOW", self.on_close)
 
-    def check_for_updates(self):
+    def check_for_updates(self, manual=False):
+        if manual:
+            self.status_badge.configure(text="● CHECKING UPDATES...", text_color=COLORS["warning"])
+
         def _check():
             try:
                 req = urllib.request.Request(VERSION_CHECK_URL, headers={'Cache-Control': 'no-cache'})
@@ -202,16 +214,32 @@ class FacebookAutomationGUI(ctk.CTk):
                     remote_version = response.read().decode('utf-8').strip()
 
                 if remote_version and remote_version != __version__:
+                    # May update
                     self.after(0, lambda: self.show_update_popup(remote_version))
-            except:
-                pass
+                else:
+                    # Walang update
+                    if manual:
+                        self.after(0, lambda: messagebox.showinfo("Up to Date",
+                                                                  f"You are using the latest version (V{__version__})."))
+            except Exception as e:
+                if manual:
+                    self.after(0, lambda: messagebox.showerror("Update Error",
+                                                               f"Could not connect to update server.\nError: {e}"))
+            finally:
+                if manual:
+                    self.after(0, lambda: self.status_badge.configure(text="● IDLE", text_color=COLORS["text_sub"]))
 
         threading.Thread(target=_check, daemon=True).start()
 
     def show_update_popup(self, remote_version):
         msg = f"A new update is available! (Version V{remote_version})\n\nWould you like to download and install the update now? The program will close and restart automatically."
+
+        # Kapag nag "Yes"
         if messagebox.askyesno("System Update", msg):
             self.perform_update()
+        else:
+            # Kapag nag "No", magpapa-alala ulit after 3 minutes (180,000 milliseconds)
+            self.after(180000, lambda: self.show_update_popup(remote_version))
 
     def perform_update(self):
         self.status_badge.configure(text="● DOWNLOADING UPDATE...", text_color=COLORS["warning"])
@@ -221,14 +249,11 @@ class FacebookAutomationGUI(ctk.CTk):
                 req = urllib.request.Request(UPDATE_URL, headers={'Cache-Control': 'no-cache'})
                 with urllib.request.urlopen(req, timeout=10) as response:
                     new_code = response.read()
-
                 with open("main_update.py", "wb") as f:
                     f.write(new_code)
-
                 script_name = os.path.basename(sys.argv[0])
                 if not script_name.endswith('.py'):
                     script_name = "main.py"
-
                 bat_code = f"""@echo off
 echo Updating AutoPost... Please do not close this window.
 timeout /t 3 /nobreak >nul
@@ -238,12 +263,9 @@ del "%~f0"
 """
                 with open("updater.bat", "w") as f:
                     f.write(bat_code)
-
                 subprocess.Popen("updater.bat", creationflags=subprocess.CREATE_NEW_CONSOLE)
-
                 self.after(0, self.on_close)
-
-            except:
+            except Exception as e:
                 self.after(0, lambda: messagebox.showerror("Update Error", f"Failed to download the update: {e}"))
                 self.after(0, lambda: self.status_badge.configure(text="● IDLE", text_color=COLORS["text_sub"]))
 
@@ -258,7 +280,18 @@ del "%~f0"
                                    "device" in l and not l.startswith("*")]
 
                 if set(current_devices) != set(getattr(self, 'devices', [])):
+                    self.devices = current_devices
                     self.after(0, self.refresh_devices)
+
+                    if self.is_running:
+                        self.after(0, lambda: self.overall_stats.update_devices(len(self.active_devices_set)))
+                        for dev in current_devices:
+                            if dev not in self.active_devices_set:
+                                self.log_row(dev, "---", "---", "NEW DEVICE DETECTED. SYNCING...", "WARN")
+                                self.active_devices_set.add(dev)
+                                self.after(0, lambda: self.overall_stats.update_devices(len(self.active_devices_set)))
+                                t = threading.Thread(target=self.run_fb_automation, args=(dev,))
+                                t.start()
             except Exception:
                 pass
             time.sleep(3)
@@ -328,7 +361,6 @@ del "%~f0"
                                       command=self.stop_automation)
         self.stop_btn.pack(fill="x", padx=20, pady=(0, 10))
 
-        # --- DELAY INPUTS ---
         lbl_delay = ctk.CTkLabel(control_frame, text="⚡ ACTION DELAY (Pre/Post)", font=("Roboto", 12, "bold"),
                                  text_color=COLORS["text_sub"])
         lbl_delay.pack(anchor="w", padx=20, pady=(10, 5))
@@ -346,9 +378,7 @@ del "%~f0"
                                             justify="center")
         self.dash_post_delay.pack(side="left", padx=5)
         self.dash_post_delay.insert(0, "10")
-        # ------------------------
 
-        # BUTTONS
         unlock_btn = ctk.CTkButton(control_frame, text="🔓 UNLOCK (SWIPE UP)", height=35, fg_color=COLORS["primary"],
                                    corner_radius=10, hover_color="#3B82F6", font=("Roboto", 12, "bold"),
                                    command=self.action_go_home)
@@ -374,7 +404,14 @@ del "%~f0"
                                    corner_radius=10,
                                    hover_color="#C53030", font=("Roboto", 12, "bold"),
                                    command=self.reboot_all_devices)
-        reboot_btn.pack(fill="x", padx=20, pady=(0, 15))
+        reboot_btn.pack(fill="x", padx=20, pady=(0, 10))
+
+        # --- NEW UPDATE BUTTON HERE ---
+        update_btn = ctk.CTkButton(control_frame, text="☁ CHECK FOR UPDATES", height=35, fg_color="#238636",
+                                   corner_radius=10, hover_color="#2EA043", font=("Roboto", 12, "bold"),
+                                   command=lambda: self.check_for_updates(manual=True))
+        update_btn.pack(fill="x", padx=20, pady=(0, 15))
+        # ------------------------------
 
         right_panel = ctk.CTkFrame(self.tab_dash, fg_color=COLORS["bg_card"], corner_radius=15, border_width=1,
                                    border_color=COLORS["border"])
@@ -471,7 +508,6 @@ del "%~f0"
         self.retry_count.grid(row=1, column=1, sticky="w", padx=15)
         self.retry_count.insert(0, "3")
 
-        # INPUT FOR COOKIE LIMIT
         ctk.CTkLabel(f2_inner, text="Max Cookies per Device:", font=FONT_BODY).grid(row=2, column=0, sticky="w",
                                                                                     pady=10)
         self.cookie_limit_entry = ctk.CTkEntry(f2_inner, width=70, height=40, justify="center", corner_radius=8,
@@ -484,35 +520,22 @@ del "%~f0"
                       fg_color=COLORS["primary"], command=self.save_config).pack(pady=15)
 
     def setup_logs(self):
-        toolbar = ctk.CTkFrame(self.tab_logs, fg_color="transparent")
-        toolbar.pack(fill="x", pady=(0, 15))
-
-        self.filter_var = ctk.StringVar(value="All")
-        ctk.CTkRadioButton(toolbar, text="All Logs", variable=self.filter_var, value="All", command=self.filter_logs,
-                           font=FONT_BODY,
-                           fg_color=COLORS["primary"]).pack(side="left", padx=15)
-        ctk.CTkRadioButton(toolbar, text="Success Only", variable=self.filter_var, value="Success", font=FONT_BODY,
-                           command=self.filter_logs, fg_color=COLORS["success"]).pack(side="left", padx=15)
-        ctk.CTkRadioButton(toolbar, text="Errors Only", variable=self.filter_var, value="Error", font=FONT_BODY,
-                           command=self.filter_logs, fg_color=COLORS["danger"]).pack(side="left", padx=15)
-
-        ctk.CTkButton(toolbar, text="🗑 Clear", width=90, height=35, corner_radius=8, fg_color=COLORS["bg_card"],
-                      font=("Roboto", 12, "bold"), border_width=1, border_color=COLORS["border"],
-                      hover_color=COLORS["danger"], command=self.clear_logs).pack(side="right", padx=(5, 0))
-        ctk.CTkButton(toolbar, text="📤 Export", width=90, height=35, corner_radius=8, fg_color=COLORS["bg_card"],
-                      font=("Roboto", 12, "bold"), border_width=1, border_color=COLORS["border"],
-                      hover_color=COLORS["primary"], command=self.export_logs).pack(side="right", padx=5)
+        self.tab_logs.grid_columnconfigure(0, weight=1)
+        self.tab_logs.grid_rowconfigure(0, weight=1)
+        self.tab_logs.grid_rowconfigure(1, weight=1)
 
         style = ttk.Style()
         style.theme_use("default")
+
         style.configure("Treeview",
                         background=COLORS["bg_card"],
                         foreground=COLORS["text_main"],
-                        rowheight=40,
                         fieldbackground=COLORS["bg_card"],
                         bordercolor=COLORS["border"],
                         borderwidth=0,
+                        rowheight=30,
                         font=("Roboto", 12))
+
         style.map('Treeview', background=[('selected', COLORS["primary"])])
 
         style.configure("Treeview.Heading",
@@ -520,53 +543,102 @@ del "%~f0"
                         foreground=COLORS["text_main"],
                         relief="flat",
                         font=("Roboto", 13, "bold"))
-        style.map("Treeview.Heading", background=[('active', COLORS["bg_main"])])
+        style.map("Treeview.Heading",
+                  background=[('active', COLORS["bg_main"])])
 
-        tree_frame = ctk.CTkFrame(self.tab_logs, corner_radius=0, fg_color="transparent")
-        tree_frame.pack(fill="both", expand=True)
+        frame_auto = ctk.CTkFrame(self.tab_logs, fg_color="transparent")
+        frame_auto.grid(row=0, column=0, sticky="nsew", padx=10, pady=(10, 5))
 
-        columns = ("Time", "Model", "Link", "Caption", "Status")
-        self.log_tree = ttk.Treeview(tree_frame, columns=columns, show="headings", style="Treeview")
+        # --- MODIFIED HEADER SECTION START ---
+        header_frame = ctk.CTkFrame(frame_auto, fg_color="transparent")
+        header_frame.pack(fill="x", pady=(0, 5))
 
-        self.log_tree.heading("Time", text="TIME")
-        self.log_tree.heading("Model", text="MODEL")
-        self.log_tree.heading("Link", text="LINK")
-        self.log_tree.heading("Caption", text="CAPTION")
-        self.log_tree.heading("Status", text="STATUS")
+        ctk.CTkLabel(header_frame, text="📝 AUTOMATION LOGS (Posting & Account Status)", font=FONT_SUBHEADER,
+                     text_color=COLORS["primary"]).pack(side="left")
 
-        self.log_tree.column("Time", width=120, anchor="center")
-        self.log_tree.column("Model", width=140, anchor="center")
-        self.log_tree.column("Link", width=280, anchor="w")
-        self.log_tree.column("Caption", width=280, anchor="w")
-        self.log_tree.column("Status", width=160, anchor="center")
+        # Ito ang bagong Total Shares counter sa Logs tab
+        self.log_shares_label = ctk.CTkLabel(header_frame, text="TOTAL SHARES: 0", font=("Roboto", 14, "bold"),
+                                             text_color=COLORS["success"])
+        self.log_shares_label.pack(side="right", padx=10)
+        # --- MODIFIED HEADER SECTION END ---
 
-        scrollbar = ttk.Scrollbar(tree_frame, orient="vertical", command=self.log_tree.yview)
-        self.log_tree.configure(yscrollcommand=scrollbar.set)
-        scrollbar.pack(side="right", fill="y")
-        self.log_tree.pack(side="left", fill="both", expand=True)
+        tree_frame_auto = ctk.CTkFrame(frame_auto, corner_radius=0, fg_color="transparent")
+        tree_frame_auto.pack(fill="both", expand=True)
 
-        self.log_tree.tag_configure("SUCCESS", foreground=COLORS["success"])
-        self.log_tree.tag_configure("ERROR", foreground=COLORS["danger"])
-        self.log_tree.tag_configure("WARN", foreground=COLORS["warning"])
-        self.log_tree.tag_configure("INFO", foreground="#4FC3F7")
+        cols_auto = ("Time", "Device", "Link", "Caption", "Status")
+        self.auto_tree = ttk.Treeview(tree_frame_auto, columns=cols_auto, show="headings", height=8)
 
-        # --- ENABLE DOUBLE CLICK ---
-        self.log_tree.bind("<Double-1>", self.on_log_double_click)
+        self.auto_tree.heading("Time", text="TIME")
+        self.auto_tree.heading("Device", text="DEVICE")
+        self.auto_tree.heading("Link", text="LINK")
+        self.auto_tree.heading("Caption", text="CAPTION")
+        self.auto_tree.heading("Status", text="STATUS")
+
+        self.auto_tree.column("Time", width=100, anchor="center")
+        self.auto_tree.column("Device", width=100, anchor="center")
+        self.auto_tree.column("Link", width=250, anchor="w")
+        self.auto_tree.column("Caption", width=200, anchor="w")
+        self.auto_tree.column("Status", width=150, anchor="center")
+
+        sb_auto = ctk.CTkScrollbar(tree_frame_auto, orientation="vertical", command=self.auto_tree.yview)
+        self.auto_tree.configure(yscrollcommand=sb_auto.set)
+        sb_auto.pack(side="right", fill="y")
+        self.auto_tree.pack(side="left", fill="both", expand=True)
+
+        self.auto_tree.tag_configure("SUCCESS", foreground=COLORS["success"])
+        self.auto_tree.tag_configure("ERROR", foreground=COLORS["danger"])
+        self.auto_tree.tag_configure("WARN", foreground=COLORS["warning"])
+        self.auto_tree.bind("<Double-1>", self.on_log_double_click)
+
+        frame_sys = ctk.CTkFrame(self.tab_logs, fg_color="transparent")
+        frame_sys.grid(row=1, column=0, sticky="nsew", padx=10, pady=(5, 10))
+
+        sys_head = ctk.CTkFrame(frame_sys, fg_color="transparent")
+        sys_head.pack(fill="x", pady=(0, 5))
+        ctk.CTkLabel(sys_head, text="⚙️ SYSTEM & ADB EVENTS (Reboot, Crash, Connection)", font=FONT_SUBHEADER,
+                     text_color=COLORS["warning"]).pack(side="left")
+        ctk.CTkButton(sys_head, text="🗑 Clear Logs", width=80, height=25, font=("Roboto", 11),
+                      fg_color=COLORS["bg_card"], command=self.clear_logs).pack(side="right")
+
+        tree_frame_sys = ctk.CTkFrame(frame_sys, corner_radius=0, fg_color="transparent")
+        tree_frame_sys.pack(fill="both", expand=True)
+
+        cols_sys = ("Time", "Device", "Message", "Status")
+        self.sys_tree = ttk.Treeview(tree_frame_sys, columns=cols_sys, show="headings", height=6)
+
+        self.sys_tree.heading("Time", text="TIME")
+        self.sys_tree.heading("Device", text="DEVICE")
+        self.sys_tree.heading("Message", text="EVENT/MESSAGE")
+        self.sys_tree.heading("Status", text="TYPE")
+
+        self.sys_tree.column("Time", width=100, anchor="center")
+        self.sys_tree.column("Device", width=120, anchor="center")
+        self.sys_tree.column("Message", width=400, anchor="w")
+        self.sys_tree.column("Status", width=100, anchor="center")
+
+        sb_sys = ctk.CTkScrollbar(tree_frame_sys, orientation="vertical", command=self.sys_tree.yview)
+        self.sys_tree.configure(yscrollcommand=sb_sys.set)
+        sb_sys.pack(side="right", fill="y")
+        self.sys_tree.pack(side="left", fill="both", expand=True)
+
+        self.sys_tree.tag_configure("INFO", foreground="#4FC3F7")
+        self.sys_tree.tag_configure("WARN", foreground=COLORS["warning"])
+        self.sys_tree.tag_configure("ERROR", foreground=COLORS["danger"])
+        self.sys_tree.tag_configure("SUCCESS", foreground=COLORS["success"])
 
     def on_log_double_click(self, event):
-        """Handle double clicks on log entries."""
-        region = self.log_tree.identify("region", event.x, event.y)
+        region = self.auto_tree.identify("region", event.x, event.y)
         if region == "cell":
-            column = self.log_tree.identify_column(event.x)
-            if column == "#3":  # "Link" column
-                item_id = self.log_tree.identify_row(event.y)
-                item = self.log_tree.item(item_id)
+            column = self.auto_tree.identify_column(event.x)
+            if column == "#3":
+                item_id = self.auto_tree.identify_row(event.y)
+                item = self.auto_tree.item(item_id)
                 url = item['values'][2]
                 if url and "http" in url:
                     try:
                         webbrowser.open(url)
                     except:
-                        print(f"Error opening link: {e}")
+                        pass
 
     def setup_adb(self):
         container = ctk.CTkFrame(self.tab_adb, fg_color="transparent")
@@ -629,7 +701,6 @@ del "%~f0"
         if not getattr(self, 'devices', []):
             messagebox.showwarning("Warning", "No devices connected!")
             return
-
         state_int = "1" if state else "0"
         state_bool = "true" if state else "false"
         CREATE_NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
@@ -643,7 +714,6 @@ del "%~f0"
                      "state", state_bool], creationflags=CREATE_NO_WINDOW)
                 status_text = "ON" if state else "OFF"
                 self.log_row(dev, "---", "---", f"AIRPLANE MODE {status_text}", "INFO")
-
             self.after(0, lambda: messagebox.showinfo("Success",
                                                       f"Airplane Mode turned {'ON' if state else 'OFF'} for all devices."))
 
@@ -660,11 +730,9 @@ del "%~f0"
         if not apk_path or not os.path.exists(apk_path):
             messagebox.showerror("Error", "Please select a valid APK file.")
             return
-
         if not getattr(self, 'devices', []):
             messagebox.showwarning("Warning", "No devices connected!")
             return
-
         CREATE_NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
 
         def task():
@@ -679,7 +747,6 @@ del "%~f0"
                         self.log_row(dev, "---", "---", "APK INSTALL FAILED", "ERROR")
                 except:
                     self.log_row(dev, "---", "---", f"INSTALL ERROR", "ERROR")
-
             self.after(0,
                        lambda: messagebox.showinfo("Done", "Batch APK installation completed. Check logs for details."))
 
@@ -689,11 +756,9 @@ del "%~f0"
         if not getattr(self, 'devices', []):
             messagebox.showwarning("Warning", "No devices connected!")
             return
-
         confirm = messagebox.askyesno("Confirm Reboot", "Are you sure you want to reboot ALL connected devices?")
         if not confirm:
             return
-
         CREATE_NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
 
         def task():
@@ -703,7 +768,6 @@ del "%~f0"
                     subprocess.Popen(["adb", "-s", dev, "reboot"], creationflags=CREATE_NO_WINDOW)
                 except:
                     self.log_row(dev, "---", "---", f"REBOOT ERROR", "ERROR")
-
             self.after(0, lambda: messagebox.showinfo("Done",
                                                       "Reboot command sent to all devices. They will disconnect momentarily."))
 
@@ -713,31 +777,23 @@ del "%~f0"
         if not getattr(self, 'devices', []):
             messagebox.showwarning("Warning", "No devices connected!")
             return
-
         CREATE_NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
 
         def task():
             for dev in self.devices:
                 self.log_row(dev, "---", "---", "SWIPING UP TO UNLOCK...", "INFO")
                 try:
-                    # 1. Wake screen (224)
                     subprocess.run(["adb", "-s", dev, "shell", "input", "keyevent", "224"],
                                    creationflags=CREATE_NO_WINDOW)
                     time.sleep(0.5)
-
-                    # 2. Swipe Up (200 500 -> 200 0)
                     subprocess.run(["adb", "-s", dev, "shell", "input", "swipe", "200", "500", "200", "0", "300"],
                                    creationflags=CREATE_NO_WINDOW)
                     time.sleep(1)
-
-                    # 3. Press Home (3) just in case
                     subprocess.run(["adb", "-s", dev, "shell", "input", "keyevent", "3"],
                                    creationflags=CREATE_NO_WINDOW)
-
                     self.log_row(dev, "---", "---", "DEVICE UNLOCKED/HOME", "SUCCESS")
                 except:
                     self.log_row(dev, "---", "---", "UNLOCK FAILED", "ERROR")
-
             self.after(0, lambda: messagebox.showinfo("Done", "Unlock command sent to all devices."))
 
         threading.Thread(target=task, daemon=True).start()
@@ -746,20 +802,17 @@ del "%~f0"
         if not getattr(self, 'devices', []):
             messagebox.showwarning("Warning", "No devices connected!")
             return
-
         CREATE_NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
 
         def task():
             for dev in self.devices:
                 self.log_row(dev, "---", "---", "GOING HOME...", "INFO")
                 try:
-                    # Just keyevent 3
                     subprocess.run(["adb", "-s", dev, "shell", "input", "keyevent", "3"],
                                    creationflags=CREATE_NO_WINDOW)
                     self.log_row(dev, "---", "---", "DEVICE AT HOME", "SUCCESS")
                 except:
                     self.log_row(dev, "---", "---", "HOME FAILED", "ERROR")
-
             self.after(0, lambda: messagebox.showinfo("Done", "Home command sent to all devices."))
 
         threading.Thread(target=task, daemon=True).start()
@@ -768,23 +821,19 @@ del "%~f0"
         if not getattr(self, 'devices', []):
             messagebox.showwarning("Warning", "No devices connected!")
             return
-
         CREATE_NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
 
         def task():
             for dev in self.devices:
                 self.log_row(dev, "---", "---", "SETTING ALWAYS ON...", "INFO")
                 try:
-                    # svc power stayon true (Keeps screen on when plugged into USB)
                     subprocess.run(["adb", "-s", dev, "shell", "svc", "power", "stayon", "true"],
                                    creationflags=CREATE_NO_WINDOW)
-                    # Also wake it up now just in case
                     subprocess.run(["adb", "-s", dev, "shell", "input", "keyevent", "224"],
                                    creationflags=CREATE_NO_WINDOW)
                     self.log_row(dev, "---", "---", "SCREEN SET TO AWAKE", "SUCCESS")
                 except:
                     self.log_row(dev, "---", "---", "SET AWAKE FAILED", "ERROR")
-
             self.after(0, lambda: messagebox.showinfo("Done", "Devices set to Stay Awake (while charging)."))
 
         threading.Thread(target=task, daemon=True).start()
@@ -793,20 +842,17 @@ del "%~f0"
         if not getattr(self, 'devices', []):
             messagebox.showwarning("Warning", "No devices connected!")
             return
-
         CREATE_NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
 
         def task():
             for dev in self.devices:
                 if ":" in dev or "." in dev:
                     continue
-
                 self.log_row(dev, "---", "---", "ENABLING WIRELESS ADB...", "INFO")
                 try:
                     subprocess.run(["adb", "-s", dev, "tcpip", "5555"], capture_output=True,
                                    creationflags=CREATE_NO_WINDOW)
                     time.sleep(2)
-
                     ip_out = subprocess.check_output(["adb", "-s", dev, "shell", "ip", "route"],
                                                      creationflags=CREATE_NO_WINDOW).decode('utf-8')
                     ip = None
@@ -816,7 +862,6 @@ del "%~f0"
                             if 'src' in parts:
                                 ip = parts[parts.index('src') + 1]
                                 break
-
                     if not ip:
                         ip_out2 = subprocess.check_output(["adb", "-s", dev, "shell", "ip", "addr", "show", "wlan0"],
                                                           creationflags=CREATE_NO_WINDOW).decode('utf-8')
@@ -824,7 +869,6 @@ del "%~f0"
                             if 'inet ' in line:
                                 ip = line.strip().split()[1].split('/')[0]
                                 break
-
                     if ip:
                         res = subprocess.run(["adb", "connect", f"{ip}:5555"], capture_output=True, text=True,
                                              creationflags=CREATE_NO_WINDOW)
@@ -834,10 +878,8 @@ del "%~f0"
                             self.log_row(dev, "---", "---", f"WIRELESS FAILED ({ip})", "ERROR")
                     else:
                         self.log_row(dev, "---", "---", "NO WIFI IP FOUND", "ERROR")
-
-                except:
+                except Exception as e:
                     self.log_row(dev, "---", "---", f"WIFI ERROR: {e}", "ERROR")
-
             self.after(0, lambda: messagebox.showinfo("Done",
                                                       "Wireless setup complete. You may now unplug USB cables if connected successfully."))
             self.after(2000, self.refresh_devices)
@@ -885,23 +927,21 @@ del "%~f0"
         self.chrome_driver_path = self.driver_entry.get()
         self.global_cookie_path = self.cookie_entry.get()
         self.saved_settings["cookie_limit"] = self.cookie_limit_entry.get()
-        # SAVE DASHBOARD DELAY SETTINGS
+
+        # Saving Timing & Safety Settings
+        if hasattr(self, 'min_delay'):
+            self.saved_settings["min_delay"] = self.min_delay.get()
+        if hasattr(self, 'max_delay'):
+            self.saved_settings["max_delay"] = self.max_delay.get()
+        if hasattr(self, 'retry_count'):
+            self.saved_settings["retry_count"] = self.retry_count.get()
+
         if hasattr(self, 'dash_pre_delay'):
             self.saved_settings["dash_pre_delay"] = self.dash_pre_delay.get()
             self.saved_settings["dash_post_delay"] = self.dash_post_delay.get()
 
         self.save_settings()
         messagebox.showinfo("Saved", "Configuration updated successfully.")
-
-    def filter_logs(self):
-        filter_value = self.filter_var.get()
-        for item in self.log_tree.get_children():
-            self.log_tree.delete(item)
-
-        for log_entry in self.all_logs:
-            if filter_value == "All" or filter_value.lower() in log_entry["status"].lower() or filter_value.upper() == \
-                    log_entry["level"]:
-                self.display_log_entry(log_entry)
 
     def export_logs(self):
         file = filedialog.asksaveasfilename(defaultextension=".txt", filetypes=[("Text files", "*.txt")])
@@ -910,17 +950,19 @@ del "%~f0"
                 f.write(f"{'TIME':<12} | {'DEVICE':<10} | {'LINK':<40} | {'CAPTION':<40} | {'STATUS'}\n")
                 f.write("-" * 120 + "\n")
                 for log_entry in self.all_logs:
+                    msg = log_entry["caption"] if log_entry["caption"] != "---" else log_entry["link"]
                     f.write(
-                        f"{log_entry['timestamp']:<12} | {log_entry['device']:<10} | {log_entry['link']:<40} | {log_entry['caption']:<40} | {log_entry['status']}\n")
+                        f"{log_entry['timestamp']:<12} | {log_entry['device']:<10} | {msg:<80} | {log_entry['status']}\n")
             messagebox.showinfo("Exported", f"Logs saved to {file}")
 
     def clear_logs(self):
-        for item in self.log_tree.get_children():
-            self.log_tree.delete(item)
+        for item in self.auto_tree.get_children():
+            self.auto_tree.delete(item)
+        for item in self.sys_tree.get_children():
+            self.sys_tree.delete(item)
         self.all_logs = []
 
     def get_manila_time(self):
-        # CHANGED TO 12-HOUR AM/PM FORMAT
         return datetime.now().strftime("%I:%M:%S %p")
 
     def load_settings(self):
@@ -931,19 +973,22 @@ del "%~f0"
                     data = json.load(f)
                     self.chrome_driver_path = data.get("chrome_driver_path", "chromedriver.exe")
                     self.global_cookie_path = data.get("global_cookie_path", "")
-
                     limit = data.get("cookie_limit", "0")
-                    # DEFAULT TO 10
                     pre_d = data.get("dash_pre_delay", "10")
                     post_d = data.get("dash_post_delay", "10")
 
-                    self.after(500, lambda: self.set_ui_values(limit, pre_d, post_d))
+                    # Load Timing & Safety
+                    min_d = data.get("min_delay", "5")
+                    max_d = data.get("max_delay", "10")
+                    retries = data.get("retry_count", "3")
+
+                    self.after(500, lambda: self.set_ui_values(limit, pre_d, post_d, min_d, max_d, retries))
                     return data
             except:
                 return {}
         return {}
 
-    def set_ui_values(self, limit, pre, post):
+    def set_ui_values(self, limit, pre, post, min_d, max_d, retries):
         if hasattr(self, 'cookie_limit_entry'):
             self.cookie_limit_entry.delete(0, "end")
             self.cookie_limit_entry.insert(0, str(limit))
@@ -953,6 +998,17 @@ del "%~f0"
         if hasattr(self, 'dash_post_delay'):
             self.dash_post_delay.delete(0, "end")
             self.dash_post_delay.insert(0, str(post))
+
+        # Set Timing & Safety UI
+        if hasattr(self, 'min_delay'):
+            self.min_delay.delete(0, "end")
+            self.min_delay.insert(0, str(min_d))
+        if hasattr(self, 'max_delay'):
+            self.max_delay.delete(0, "end")
+            self.max_delay.insert(0, str(max_d))
+        if hasattr(self, 'retry_count'):
+            self.retry_count.delete(0, "end")
+            self.retry_count.insert(0, str(retries))
 
     def save_settings(self):
         settings_file = "device_settings.json"
@@ -1014,11 +1070,18 @@ del "%~f0"
         status = log_entry["status"]
         level = log_entry["level"]
 
-        disp_link = (link[:47] + '...') if len(link) > 50 else link
-        disp_cap = (cap[:47] + '...') if len(cap) > 50 else cap
+        is_system_msg = any(x in status.upper() or x in link.upper() for x in
+                            ["REBOOT", "ADB", "CRASH", "WIFI", "AIRPLANE", "INSTALL", "SYSTEM", "NEW DEVICE", "WAITING",
+                             "UNLOCKING", "PREPARING"])
 
-        item = self.log_tree.insert("", "end", values=(ts, dev, disp_link, disp_cap, status), tags=(level,))
-        self.log_tree.see(item)
+        if is_system_msg:
+            item = self.sys_tree.insert("", "end", values=(ts, dev, status, level), tags=(level,))
+            self.sys_tree.see(item)
+        else:
+            disp_link = (link[:47] + '...') if len(link) > 50 else link
+            disp_cap = (cap[:47] + '...') if len(cap) > 50 else cap
+            item = self.auto_tree.insert("", "end", values=(ts, dev, disp_link, disp_cap, status), tags=(level,))
+            self.auto_tree.see(item)
 
     def refresh_devices(self):
         try:
@@ -1027,26 +1090,21 @@ del "%~f0"
             current_devices = [l.split()[0] for l in o.strip().split("\n")[1:] if
                                "device" in l and not l.startswith("*")]
             self.devices = current_devices
-
             self.device_count_label.configure(text=f"Connected: {len(self.devices)}")
-
-            self.overall_stats.update_devices(len(self.devices))
-
+            if not self.is_running:
+                self.overall_stats.update_devices(len(self.devices))
             for widget in self.device_config_frame.winfo_children():
                 widget.destroy()
             self.device_widgets = []
-
             if not self.devices:
                 ctk.CTkLabel(self.device_config_frame, text="No Android devices found via ADB.", text_color="#666",
                              font=FONT_BODY).pack(pady=20)
                 return
-
             for device in self.devices:
                 device_frame = DeviceFrame(self.device_config_frame, device)
                 device_frame.pack(fill="x", padx=15, pady=8)
                 self.device_widgets.append(device_frame)
                 threading.Thread(target=self.get_device_info, args=(device, device_frame), daemon=True).start()
-
         except:
             self.device_count_label.configure(text="Devices: ADB Error")
 
@@ -1058,13 +1116,11 @@ del "%~f0"
             version_result = subprocess.run(["adb", "-s", device_id, "shell", "getprop", "ro.build.version.release"],
                                             capture_output=True, text=True,
                                             creationflags=CREATE_NO_WINDOW).stdout.strip()
-
             res_output = subprocess.run(["adb", "-s", device_id, "shell", "wm", "size"],
                                         capture_output=True, text=True, creationflags=CREATE_NO_WINDOW).stdout.strip()
             if "size:" in res_output:
                 dims = res_output.split()[-1].split("x")
                 self.device_resolutions[device_id] = (int(dims[0]), int(dims[1]))
-
             self.after(100, lambda: device_frame.update_device_info(model_result, version_result))
         except:
             self.device_resolutions[device_id] = (1080, 2400)
@@ -1077,55 +1133,72 @@ del "%~f0"
                 cookies.append({"name": name, "value": value, "domain": ".facebook.com"})
         return cookies
 
-    def run_fb_automation(self, device_id, job_list, device_cookies, start_index):
-        global post_box
+    def unlock_device_sequence(self, device_id):
+        CREATE_NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+        try:
+            subprocess.run(["adb", "-s", device_id, "shell", "input", "keyevent", "224"],
+                           creationflags=CREATE_NO_WINDOW)
+            time.sleep(0.5)
+            subprocess.run(["adb", "-s", device_id, "shell", "input", "swipe", "200", "500", "200", "0", "300"],
+                           creationflags=CREATE_NO_WINDOW)
+            time.sleep(1)
+            subprocess.run(["adb", "-s", device_id, "shell", "input", "keyevent", "3"],
+                           creationflags=CREATE_NO_WINDOW)
+        except:
+            pass
+
+    def run_fb_automation(self, device_id):
+        self.log_row(device_id, "---", "---", "PREPARING & UNLOCKING...", "INFO")
+        self.unlock_device_sequence(device_id)
+
         options = Options()
         options.add_experimental_option("androidPackage", "com.android.chrome")
         options.add_experimental_option("androidDeviceSerial", device_id)
-        options.add_argument("--blink-settings=imagesEnabled=false,videoAutoplayEnabled=false")
-        options.add_argument("--disable-notifications")
-        options.add_experimental_option("excludeSwitches", ["enable-logging"])
-        options.add_argument("--no-sandbox")
-        options.add_argument("--mute-audio")
-        options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--disable-fre")
-        options.add_argument("--no-first-run")
-        options.add_argument("--no-default-browser-check")
-        options.add_argument("--disable-popup-blocking")
-        options.add_experimental_option("excludeSwitches", ["enable-automation"])
-
+        args = [
+            "--blink-settings=imagesEnabled=false,videoAutoplayEnabled=false",
+            "--disable-notifications", "--no-sandbox", "--mute-audio",
+            "--disable-dev-shm-usage", "--disable-popup-blocking", "--disable-infobars"
+        ]
+        for arg in args:
+            options.add_argument(arg)
+        options.add_experimental_option("excludeSwitches", ["enable-logging", "enable-automation"])
         service = Service(executable_path=self.chrome_driver_path)
-        local_cookies = list(device_cookies)
 
-        # --- GET DELAY SETTINGS ---
         try:
             pre_wait = float(self.dash_pre_delay.get())
         except:
-            pre_wait = 10  # Default fallback
+            pre_wait = 5.0
         try:
-            post_wait = float(self.dash_post_delay.get())
+            limit_per_dev = int(self.cookie_limit_entry.get())
         except:
-            post_wait = 10  # Default fallback
-        # --------------------------
+            limit_per_dev = 0
 
-        cookie_counter = 0
+        local_processed_count = 0
+        CREATE_NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
 
-        while local_cookies and self.is_running:
-            cookie_str = local_cookies.pop(0)
-
-            # --- ACCOUNT NUMBER TRACKING ---
-            current_account_num = start_index + cookie_counter
-            cookie_counter += 1
+        while self.is_running:
+            if limit_per_dev > 0 and local_processed_count >= limit_per_dev:
+                self.log_row(device_id, "---", "---", "DEVICE REACHED LIMIT", "INFO")
+                break
+            try:
+                cookie_data = self.cookie_queue.get(timeout=2)
+                cookie_str = cookie_data['cookie']
+                acc_idx = cookie_data['index']
+            except queue.Empty:
+                if self.is_running and self.cookie_queue.empty():
+                    break
+                continue
 
             driver = None
-            CREATE_NO_WINDOW = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+            local_processed_count += 1
 
             try:
                 subprocess.run(["adb", "-s", device_id, "shell", "pm", "clear", "com.android.chrome"],
                                capture_output=True, creationflags=CREATE_NO_WINDOW)
-                time.sleep(3)
+                time.sleep(2)
+
                 driver = webdriver.Chrome(service=service, options=options)
-                wait = WebDriverWait(driver, 10)
+                wait = WebDriverWait(driver, 15)
                 driver.get("https://m.facebook.com")
 
                 for c in self.parse_cookies(cookie_str):
@@ -1133,238 +1206,165 @@ del "%~f0"
                         driver.add_cookie(c)
                     except:
                         continue
-                time.sleep(5)
                 driver.refresh()
-                time.sleep(5)
 
-                if "login" in driver.current_url.lower() or "checkpoint" in driver.current_url.lower():
-                    raise Exception("Account Error - Na-checkpoint o hindi naka-log in.")
-                time.sleep(6)
+                try:
+                    wait.until(EC.presence_of_element_located((By.XPATH,
+                                                               "//div[@aria-label=\"What's on your mind?\"] | //div[@role='feed'] | //a[contains(@href, 'messages')]")))
+                except:
+                    try:
+                        open_app_element = driver.find_elements(By.XPATH,
+                                                                "//div[@data-mcomponent='TextArea']//span[contains(text(), 'Open app')]")
+                        if open_app_element:
+                            raise Exception("Error: Stuck on 'Open app' screen")
+                    except:
+                        pass
+                    if "facebook.com" in driver.current_url or "https://www.facebook.com/" in driver.current_url:
+                        raise Exception("Account Checkpointed/Not Logged In")
+                    continue
 
-                # --- ENUMERATE FOR LINK NUMBER TRACKING ---
-                for link_num, (link, caption_file) in enumerate(job_list, 1):
+                time.sleep(3)
+
+                for link_num, (link, caption_file) in enumerate(self.job_list_global, 1):
                     if not self.is_running: break
                     sel_cap = "---"
-
-                    # --- RETRY LOGIC FOR COMPOSER / SEND KEYS ---
-                    max_composer_retries = 3
                     post_success = False
 
-                    for attempt in range(max_composer_retries):
+                    for attempt in range(3):
                         if not self.is_running: break
                         try:
-                            # 1. Navigate/Refresh Composer
                             driver.get("https://m.facebook.com/composer/")
-
-                            # 2. Find Trigger/Box
-                            try:
-                                trigger_xpath = "//div[@data-mcomponent='TextArea'] | //div[@aria-label=\"What's on your mind?\"] | //div[@role='button' and .//span[text()=\"What's on your mind?\"]]"
-                                trigger_btn = WebDriverWait(driver, 5).until(
-                                    EC.element_to_be_clickable((By.XPATH, trigger_xpath)))
-                                time.sleep(pre_wait)
-                                trigger_btn.click()
-                                time.sleep(post_wait)
-                            except:
-                                try:
-                                    trigger_xpath = "//div[contains(@aria-label, 'mind')]"
-                                    trigger = WebDriverWait(driver, 5).until(
-                                        EC.element_to_be_clickable((By.XPATH, trigger_xpath)))
-                                    time.sleep(pre_wait)
-                                    trigger.click()
-                                    time.sleep(post_wait)
-                                except:
-                                    pass
-
-                            post_box = WebDriverWait(driver, 10).until(EC.element_to_be_clickable(
-                                (By.XPATH, "//div[@role='textbox' and @contenteditable='true'] | //textarea")
-                            ))
-
-                            time.sleep(pre_wait)
+                            post_box = wait.until(
+                                EC.element_to_be_clickable((By.XPATH, "//div[@role='textbox'] | //textarea")))
                             post_box.click()
-                            time.sleep(post_wait)
+                            time.sleep(1)
+                            post_box.send_keys(link)
+                            time.sleep(15)
 
-                            # 3. Input Link
-                            if link and link.strip():
-                                time.sleep(2)
-                                time.sleep(pre_wait)
-                                post_box.send_keys(link)
-                                time.sleep(post_wait)
-
-                                time.sleep(6)
-                                driver.execute_script("document.activeElement.blur()")
-                                time.sleep(2)
-
-                                # Re-focus attempts
-                                try:
-                                    trigger = wait.until(EC.element_to_be_clickable((By.XPATH,
-                                                                                     "//div[contains(@aria-label, 'mind')] | //textarea | //div[@role='textbox']")))
-                                    time.sleep(pre_wait)
-                                    trigger.click()
-                                    time.sleep(post_wait)
-                                    time.sleep(6)
-                                except:
-                                    pass
-
-                                while True:
-                                    try:
-                                        time.sleep(pre_wait)
-                                        post_box.send_keys(Keys.CONTROL, "a")
-                                        time.sleep(post_wait)
-                                        time.sleep(pre_wait)
-                                        post_box.send_keys(Keys.BACK_SPACE)
-                                        time.sleep(post_wait)
-                                        driver.execute_script("document.activeElement.blur()")
-                                        time.sleep(pre_wait)
-                                        break
-                                    except:
-                                        pass
+                            try:
+                                post_box.send_keys(Keys.CONTROL, "a")
+                                time.sleep(0.5)
+                                post_box.send_keys(Keys.BACK_SPACE)
+                                time.sleep(0.5)
+                            except:
+                                driver.execute_script("arguments[0].value = '';", post_box)
 
                             if caption_file and os.path.exists(caption_file):
-                                with open(caption_file, "r", encoding="utf-8") as f:
-                                    caps = [line.strip() for line in f if line.strip()]
-                                if caps:
-                                    sel_cap = random.choice(caps)
-                                    time.sleep(pre_wait)
-                                    post_box.send_keys(sel_cap)
-                                    time.sleep(post_wait)
-                                    time.sleep(2)
+                                try:
+                                    with open(caption_file, "r", encoding="utf-8") as f:
+                                        lines = [l.strip() for l in f if l.strip()]
+                                    if lines:
+                                        sel_cap = random.choice(lines)
+                                        post_box.send_keys(sel_cap)
+                                        time.sleep(pre_wait)
+                                except Exception as e:
+                                    pass
 
-                            # 5. Click Post
-                            post_xpath = "//button[@name='view_post'] | //button[@value='Post'] | //input[@value='Post'] | //div[translate(@aria-label, 'POST', 'post')='post'] | //span[translate(text(), 'POST', 'post')='post']"
-                            post_btn = wait.until(EC.presence_of_element_located((By.XPATH, post_xpath)))
-                            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", post_btn)
-                            time.sleep(6)
+                            # post_xpath = "//button[@name='view_post'] | //button[@value='Post'] | //input[@value='Post'] | //div[translate(@aria-label, 'POST', 'post')='post'] | //span[translate(text(), 'POST', 'post')='post']"
+                            # post_btn = wait.until(EC.presence_of_element_located((By.XPATH, post_xpath)))
+                            # driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", post_btn)
+                            # time.sleep(2)
+                            # driver.execute_script("arguments[0].click();", post_btn)
+                            # time.sleep(15)
 
-                            time.sleep(pre_wait)
-                            driver.execute_script("arguments[0].click();", post_btn)
-                            time.sleep(post_wait)
-
-                            time.sleep(6)
-
-                            # --- SUCCESS LOG WITH NUMBERS ---
-                            status_msg = f"SUCCESS [L#{link_num}][Acc#{current_account_num}]"
-                            self.log_row(device_id, link if link else "---", sel_cap, status_msg, "SUCCESS")
-
+                            self.log_row(device_id, link, sel_cap, f"SUCCESS [L#{link_num}][Acc#{acc_idx}]", "SUCCESS")
                             self.total_shares += 1
                             self.total_attempts += 1
                             self.update_stats()
-
                             post_success = True
                             break
 
-                        except:
-                            self.log_row(device_id, link, "---", f"RETRYING POST ({attempt + 1}/3)...", "WARN")
-                            time.sleep(2)
-                            continue
+                        except WebDriverException:
+                            raise
+                        except Exception as e:
+                            self.log_row(device_id, link, "---", f"RETRYING ({attempt + 1}/3)...", "WARN")
+                            time.sleep(3)
+                            try:
+                                driver.refresh()
+                            except:
+                                pass
 
                     if not post_success:
-                        self.log_row(device_id, link, "---", f"SKIP [L#{link_num}] (MAX RETRIES)", "ERROR")
+                        self.log_row(device_id, link, "---", f"SKIP [L#{link_num}] (FAILED)", "ERROR")
                         self.total_attempts += 1
                         self.update_stats()
-
-                    # Random Delay between posts
                     try:
                         delay = random.randint(int(self.min_delay.get() or 5), int(self.max_delay.get() or 10))
                     except:
                         delay = random.randint(5, 10)
                     time.sleep(delay)
-
                 driver.quit()
 
-            except:
-                # --- ACCOUNT FAILED LOGIC WITH NUMBER ---
-                self.log_row(device_id, "---", "---", f"ACCOUNT #{current_account_num} FAILED", "ERROR")
+            except WebDriverException as e:
+                self.log_row(device_id, "---", "---", "BROWSER CRASHED - REBOOTING DEVICE...", "WARN")
+                try:
+                    if driver: driver.quit()
+                except:
+                    pass
+                try:
+                    subprocess.Popen(["adb", "-s", device_id, "reboot"], creationflags=CREATE_NO_WINDOW)
+                    self.log_row(device_id, "---", "---", "WAITING 20s FOR BOOT...", "WARN")
+                    time.sleep(20)
+
+                    self.log_row(device_id, "---", "---", "ATTEMPTING UNLOCK...", "INFO")
+                    self.unlock_device_sequence(device_id)
+                except:
+                    self.log_row(device_id, "---", "---", "REBOOT COMMAND FAILED", "ERROR")
+                self.cookie_queue.task_done()
+                break
+            except Exception as e:
+                self.log_row(device_id, "---", "---", f"ACC #{acc_idx} ERR: {str(e)[:20]}", "ERROR")
                 self.error_count += 1
                 self.total_attempts += 1
                 self.update_stats()
-
-                if driver:
-                    try:
-                        driver.quit()
-                    except:
-                        pass
-
-                # --- AUTO REBOOT DEVICE ---
-                self.log_row(device_id, "---", "---", "REBOOTING DEVICE (FAIL RECOVERY)...", "WARN")
                 try:
-                    subprocess.run(["adb", "-s", device_id, "reboot"], creationflags=CREATE_NO_WINDOW)
-                    # WAIT FOR BOOTUP (60 SECONDS)
-                    for i in range(60):
-                        if not self.is_running: break
-                        time.sleep(1)
-                    self.log_row(device_id, "---", "---", "DEVICE REBOOT WAIT DONE", "INFO")
+                    if driver: driver.quit()
                 except:
-                    self.log_row(device_id, "---", "---", "REBOOT FAILED", "ERROR")
+                    pass
+            finally:
+                if self.is_running:
+                    try:
+                        self.cookie_queue.task_done()
+                    except ValueError:
+                        pass
+        if device_id in self.active_devices_set:
+            self.active_devices_set.remove(device_id)
+            self.after(0, lambda: self.overall_stats.update_devices(len(self.active_devices_set)))
 
     def update_stats(self):
+        # Update Dashboard Stats
         self.after(0, lambda: self.overall_stats.update_stats(self.total_shares, self.error_count))
+
+        # Update System Logs Counter (New)
+        if hasattr(self, 'log_shares_label'):
+            self.after(0, lambda: self.log_shares_label.configure(text=f"TOTAL SHARES: {self.total_shares}"))
 
     def start_threads(self):
         if not self.devices:
             messagebox.showerror("Error", "No devices connected!")
             return
-
-        jobs = [(p.link_entry.get(), p.caption_path.get()) for p in self.pair_widgets if
-                p.link_entry.get().strip() or p.caption_path.get().strip()]
-
-        if not jobs:
+        self.job_list_global = [(p.link_entry.get(), p.caption_path.get()) for p in self.pair_widgets if
+                                p.link_entry.get().strip() or p.caption_path.get().strip()]
+        if not self.job_list_global:
             messagebox.showerror("Error", "No links/jobs configured!")
             return
-
         cookie_file = self.cookie_entry.get().strip()
         if not cookie_file or not os.path.exists(cookie_file):
             messagebox.showerror("Error", "Please select a valid Global Cookie File in Settings!")
             return
-
         try:
             with open(cookie_file, "r") as f:
                 all_cookies = [line.strip() for line in f if line.strip()]
-        except:
+        except Exception as e:
             messagebox.showerror("Error", f"Failed to read cookie file: {e}")
             return
-
         if not all_cookies:
             messagebox.showerror("Error", "The cookie file is empty!")
             return
-
-        device_jobs = []
-        total_devices = len(self.devices)
-
-        # COOKIE LIMIT LOGIC
-        try:
-            limit_per_dev = int(self.cookie_limit_entry.get())
-        except:
-            limit_per_dev = 0
-
-        if limit_per_dev > 0:
-            cursor = 0
-            for device in self.devices:
-                if cursor >= len(all_cookies):
-                    break
-
-                end_idx = cursor + limit_per_dev
-                if end_idx > len(all_cookies):
-                    end_idx = len(all_cookies)
-
-                chunk = all_cookies[cursor:end_idx]
-                if chunk:
-                    # PASS START INDEX (cursor + 1 for human readable)
-                    device_jobs.append((device, chunk, cursor + 1))
-
-                cursor += limit_per_dev
-        else:
-            for i, device in enumerate(self.devices):
-                start_idx = i * len(all_cookies) // total_devices
-                end_idx = (i + 1) * len(all_cookies) // total_devices
-                device_cookies = all_cookies[start_idx:end_idx]
-
-                if device_cookies:
-                    # PASS START INDEX
-                    device_jobs.append((device, device_cookies, start_idx + 1))
-
-        if not device_jobs:
-            messagebox.showerror("Error", "Not enough cookies to distribute or limit is too strict!")
-            return
+        with self.cookie_queue.mutex:
+            self.cookie_queue.queue.clear()
+        for i, c in enumerate(all_cookies):
+            self.cookie_queue.put({'cookie': c, 'index': i + 1})
 
         self.is_running = True
         self.start_time = datetime.now()
@@ -1372,28 +1372,38 @@ del "%~f0"
         self.start_btn.configure(state="disabled")
         self.stop_btn.configure(state="normal")
 
-        def manager():
-            threads = []
-            for device_id, cookie_list, start_idx in device_jobs:
-                t = threading.Thread(target=self.run_fb_automation, args=(device_id, jobs, cookie_list, start_idx))
-                t.start()
-                threads.append(t)
-            for t in threads: t.join()
-            self.is_running = False
+        self.tabview.set("  System Logs  ")
 
+        self.active_devices_set = set()
+
+        for device_id in self.devices:
+            self.active_devices_set.add(device_id)
+            t = threading.Thread(target=self.run_fb_automation, args=(device_id,))
+            t.start()
+        self.overall_stats.update_devices(len(self.active_devices_set))
+
+        def monitor_completion():
+            while self.is_running and not self.cookie_queue.empty():
+                time.sleep(2)
+            if self.is_running:
+                self.cookie_queue.join()
+                self.is_running = False
             self.after(0, self._reset_ui_after_run)
 
-        threading.Thread(target=manager, daemon=True).start()
+        threading.Thread(target=monitor_completion, daemon=True).start()
 
     def _reset_ui_after_run(self):
         self.start_btn.configure(state="normal")
         self.stop_btn.configure(state="disabled")
         self.status_badge.configure(text="● IDLE", text_color=COLORS["text_sub"])
+        self.overall_stats.update_devices(len(self.devices))
 
     def stop_automation(self):
         self.is_running = False
         self.stop_btn.configure(state="disabled")
         self.status_badge.configure(text="● STOPPING...", text_color=COLORS["warning"])
+        with self.cookie_queue.mutex:
+            self.cookie_queue.queue.clear()
 
     def on_close(self):
         self.destroy()
