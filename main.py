@@ -21,7 +21,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.keys import Keys
 from datetime import datetime
 
-__version__ = "5"
+__version__ = "6"
 UPDATE_URL = "https://raw.githubusercontent.com/versozadarwin23/autopost/refs/heads/main/main.py"
 VERSION_CHECK_URL = "https://raw.githubusercontent.com/versozadarwin23/autopost/refs/heads/main/version.txt"
 
@@ -212,8 +212,13 @@ class FacebookAutomationGUI(ctk.CTk):
         threading.Thread(target=_check, daemon=True).start()
 
     def show_update_popup(self, remote_version):
-        if messagebox.askyesno("Update Available", f"New Version V{remote_version} available. Update now?"):
+        msg = f"A new update is available! (Version V{remote_version})\n\nWould you like to download and install the update now?"
+        response = messagebox.askyesno("Update Available", msg)
+
+        if response:
             self.perform_update()
+        else:
+            self.after(60000, lambda: self.show_update_popup(remote_version))
 
     def perform_update(self):
         self.status_badge.configure(text="● UPDATING...", text_color=COLORS["warning"])
@@ -936,13 +941,13 @@ class FacebookAutomationGUI(ctk.CTk):
                 self.log_debug(device_id, "ADB", "Clear Chrome")
                 subprocess.run(["adb", "-s", device_id, "shell", "input", "keyevent", "224"])
                 time.sleep(2)
-                subprocess.run(["adb", "-s", device_id, "shell", "pm", "clear", "com.android.chrome"],capture_output=True, creationflags=CREATE_NO_WINDOW)
+                subprocess.run(["adb", "-s", device_id, "shell", "pm", "clear", "com.android.chrome"], capture_output=True, creationflags=CREATE_NO_WINDOW)
                 time.sleep(2)
 
                 self.log_debug(device_id, "DRIVER", "Start Chrome")
                 driver = webdriver.Chrome(service=service, options=options)
                 self.active_drivers.append(driver)
-                wait = WebDriverWait(driver, 20)
+                wait = WebDriverWait(driver, 15)
 
                 self.log_debug(device_id, "NAV", "Facebook.com")
                 blocked_urls = [
@@ -1035,7 +1040,7 @@ class FacebookAutomationGUI(ctk.CTk):
                             self.log_debug(device_id, "WAIT", "Finalizing (15s)")
                             time.sleep(15)
 
-                            self.log_row(device_id, link, sel_cap, f"SUCCESS [LINK {ln}][Acc#{acc_idx}]", "SUCCESS")
+                            self.log_row(device_id, link, sel_cap, f"SUCCESS [LINK {ln}][Account{acc_idx}]", "SUCCESS")
                             self.total_shares += 1
                             self.total_attempts += 1
                             self.update_stats()
@@ -1152,7 +1157,7 @@ class FacebookAutomationGUI(ctk.CTk):
                     self.log_row(dev, "---", "---", f"STARTING (Next in {stag}s)...", "INFO")
                     time.sleep(stag)
                 else:
-                    self.log_row(dev, "---", "---", "STARTING...", "INFO")
+                    pass
 
             while self.is_running and not self.cookie_queue.empty():
                 time.sleep(2)
