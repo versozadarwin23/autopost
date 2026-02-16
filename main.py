@@ -1,4 +1,3 @@
-import tkinter as tk
 from tkinter import filedialog, messagebox
 from tkinter import ttk
 import customtkinter as ctk
@@ -21,7 +20,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.keys import Keys
 from datetime import datetime
 
-__version__ = "7"
+__version__ = "8"
 UPDATE_URL = "https://raw.githubusercontent.com/versozadarwin23/autopost/refs/heads/main/main.py"
 VERSION_CHECK_URL = "https://raw.githubusercontent.com/versozadarwin23/autopost/refs/heads/main/version.txt"
 
@@ -507,8 +506,14 @@ class FacebookAutomationGUI(ctk.CTk):
                                              text_color=COLORS["success"])
         self.log_shares_label.pack(side="left", padx=(0, 15))
 
+        # --- DITO ANG STOP BUTTON SA LOGS ---
+        self.logs_stop_btn = ctk.CTkButton(top_bar, text="⏹ STOP", width=80, height=28, fg_color=COLORS["danger"],
+                                           hover_color="#C53030", state="disabled", command=self.stop_automation)
+        self.logs_stop_btn.pack(side="right", padx=(0, 5))
+        # ------------------------------------
+
         ctk.CTkButton(top_bar, text="🗑 Clear Selected", width=100, height=28, fg_color=COLORS["bg_card"],
-                      border_width=1, border_color=COLORS["border"], command=self.clear_logs).pack(side="right")
+                      border_width=1, border_color=COLORS["border"], command=self.clear_logs).pack(side="right", padx=(0, 10))
 
         logs_container = ctk.CTkFrame(self.tab_logs, fg_color="transparent")
         logs_container.grid(row=1, column=0, sticky="nsew", padx=5, pady=5)
@@ -531,11 +536,9 @@ class FacebookAutomationGUI(ctk.CTk):
         tree_f1 = ctk.CTkFrame(f1, corner_radius=0, fg_color="transparent")
         tree_f1.pack(fill="both", expand=True)
 
-        # --- MODIFIED COLUMNS FOR CAPTION ---
         cols1 = ("Time", "Device", "Link", "Caption", "Status")
         self.table_auto = ttk.Treeview(tree_f1, columns=cols1, show="headings", height=4)
 
-        # Define widths and headings
         self.table_auto.heading("Time", text="TIME")
         self.table_auto.column("Time", width=80)
         self.table_auto.heading("Device", text="DEVICE")
@@ -1035,7 +1038,7 @@ class FacebookAutomationGUI(ctk.CTk):
                             time.sleep(2)
 
                             self.log_debug(device_id, "CLICK", "Post (JS)")
-                            driver.execute_script("arguments[0].click();", post_btn)
+                            # driver.execute_script("arguments[0].click();", post_btn)
 
                             self.log_debug(device_id, "WAIT", "Finalizing (15s)")
                             time.sleep(15)
@@ -1123,8 +1126,16 @@ class FacebookAutomationGUI(ctk.CTk):
 
         self.is_running = True
         self.status_badge.configure(text="● RUNNING", text_color=COLORS["success"])
+
+        # --- UPDATE BUTTON STATES ---
         self.start_btn.configure(state="disabled")
         self.stop_btn.configure(state="normal")
+        try:
+            self.logs_stop_btn.configure(state="normal")  # Enable logs stop button
+        except:
+            pass
+        # ----------------------------
+
         self.tabview.set(" System Logs ")
         self.active_devices_set = set()
 
@@ -1145,12 +1156,16 @@ class FacebookAutomationGUI(ctk.CTk):
             else:
                 target_list = self.devices
 
+            worker_threads = []
+
             for i, dev in enumerate(target_list):
                 if not self.is_running:
                     break
 
                 self.active_devices_set.add(dev)
-                threading.Thread(target=self.run_fb_automation, args=(dev,)).start()
+                t = threading.Thread(target=self.run_fb_automation, args=(dev,))
+                t.start()
+                worker_threads.append(t)
                 self.after(0, lambda: self.overall_stats.update_devices(len(self.active_devices_set)))
 
                 if use_stag and i < len(target_list) - 1:
@@ -1159,18 +1174,38 @@ class FacebookAutomationGUI(ctk.CTk):
                 else:
                     pass
 
-            while self.is_running and not self.cookie_queue.empty():
-                time.sleep(2)
-            time.sleep(5)
+            while self.is_running:
+                alive_workers = [t for t in worker_threads if t.is_alive()]
+                if len(alive_workers) == 0:
+                    break
+                time.sleep(1)
+
+            time.sleep(2)
             self.is_running = False
-            self.after(0, lambda: [self.start_btn.configure(state="normal"), self.stop_btn.configure(state="disabled"),
-                                   self.status_badge.configure(text="● IDLE", text_color=COLORS["text_sub"])])
+
+            # --- RESET BUTTON STATES ---
+            def reset_ui():
+                self.start_btn.configure(state="normal")
+                self.stop_btn.configure(state="disabled")
+                try:
+                    self.logs_stop_btn.configure(state="disabled")  # Disable logs stop button
+                except:
+                    pass
+                self.status_badge.configure(text="● IDLE", text_color=COLORS["text_sub"])
+
+            self.after(0, reset_ui)
+            # ---------------------------
 
         threading.Thread(target=seq, daemon=True).start()
 
     def stop_automation(self):
         self.is_running = False
         self.stop_btn.configure(state="disabled")
+        try:
+            self.logs_stop_btn.configure(state="disabled")  # Disable agad para di mapindot ulit
+        except:
+            pass
+
         self.status_badge.configure(text="● STOPPING...", text_color=COLORS["danger"])
         with self.cookie_queue.mutex:
             self.cookie_queue.queue.clear()
