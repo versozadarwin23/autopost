@@ -21,7 +21,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.keys import Keys
 from datetime import datetime
 
-__version__ = "6"
+__version__ = "7"
 UPDATE_URL = "https://raw.githubusercontent.com/versozadarwin23/autopost/refs/heads/main/main.py"
 VERSION_CHECK_URL = "https://raw.githubusercontent.com/versozadarwin23/autopost/refs/heads/main/version.txt"
 
@@ -1269,33 +1269,45 @@ class FacebookAutomationGUI(ctk.CTk):
     def action_go_home(self):
         create_no_window = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
 
-        def t():
-            for d in self.devices:
-                subprocess.run(["adb", "-s", d, "shell", "input", "keyevent", "224"], creationflags=create_no_window)
-                subprocess.run(["adb", "-s", d, "shell", "input", "swipe", "300", "1000", "300", "500"],
-                               creationflags=create_no_window)
+        def _task(device_id):
+            try:
+                subprocess.run(["adb", "-s", device_id, "shell", "input", "keyevent", "224"],
+                             creationflags=create_no_window)
+                subprocess.run(["adb", "-s", device_id, "shell", "input", "swipe", "300", "1000", "300", "500"],
+                             creationflags=create_no_window)
+            except:
+                pass
 
-        threading.Thread(target=t, daemon=True).start()
+        for d in self.devices:
+            threading.Thread(target=_task, args=(d,), daemon=True).start()
 
     def action_home_only(self):
         create_no_window = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
 
-        def t():
-            for d in self.devices:
-                subprocess.run(["adb", "-s", d, "shell", "input", "keyevent", "3"], creationflags=create_no_window)
+        def _task(device_id):
+            try:
+                subprocess.run(["adb", "-s", device_id, "shell", "input", "keyevent", "3"],
+                             creationflags=create_no_window)
+            except:
+                pass
 
-        threading.Thread(target=t, daemon=True).start()
+        for d in self.devices:
+            threading.Thread(target=_task, args=(d,), daemon=True).start()
 
     def action_stay_awake(self):
         create_no_window = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
 
-        def t():
-            for d in self.devices:
-                subprocess.run(["adb", "-s", d, "shell", "svc", "power", "stayon", "true"],
-                               creationflags=create_no_window)
-                subprocess.run(["adb", "-s", d, "shell", "input", "keyevent", "224"], creationflags=create_no_window)
+        def _task(device_id):
+            try:
+                subprocess.run(["adb", "-s", device_id, "shell", "svc", "power", "stayon", "true"],
+                             creationflags=create_no_window)
+                subprocess.run(["adb", "-s", device_id, "shell", "input", "keyevent", "224"],
+                             creationflags=create_no_window)
+            except:
+                pass
 
-        threading.Thread(target=t, daemon=True).start()
+        for d in self.devices:
+            threading.Thread(target=_task, args=(d,), daemon=True).start()
 
     def reboot_all_devices(self):
         if not messagebox.askyesno("Reboot", "Reboot ALL connected devices?"):
